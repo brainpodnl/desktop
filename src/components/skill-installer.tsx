@@ -24,6 +24,7 @@ import {
 } from '@/lib/bridge';
 import { cx } from '@/lib/cx';
 import { errorMessage, harnessesQuery, latestSkillQuery, queryClient } from '@/lib/queries';
+import { outdated } from '@/lib/skills';
 
 /**
  * Each agent's own colour, tinting the tile its mark sits on exactly as the
@@ -192,11 +193,6 @@ function AgentFan({
       })}
     </span>
   );
-}
-
-/** An install that is ours and older than what the repository publishes. */
-function outdated(harness: Harness, latest: string | null): boolean {
-  return harness.managed && latest !== null && harness.version !== latest;
 }
 
 /**

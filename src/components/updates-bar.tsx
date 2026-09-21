@@ -1,9 +1,13 @@
+import { useQuery } from '@tanstack/react-query';
 import { motion, useReducedMotion } from 'motion/react';
-import type { ReactElement, ReactNode } from 'react';
+import { useCallback, useState, type ReactElement, type ReactNode } from 'react';
 
 import { Button } from '@/components/button';
 import { RailHeading } from '@/components/rail-heading';
+import { installSkill } from '@/lib/bridge';
 import { useCli } from '@/lib/cli';
+import { errorMessage, harnessesQuery, latestSkillQuery, queryClient } from '@/lib/queries';
+import { staleHarnesses } from '@/lib/skills';
 import { useUpdate } from '@/lib/updates';
 
 /**
@@ -12,13 +16,16 @@ import { useUpdate } from '@/lib/updates';
  * It replaced a pill floating over the graph. A pill had to be dismissible
  * because it covered the thing the user was reading; a band in the rail owns
  * its own space, so it can simply stay until it is acted on — which is what
- * makes it a place rather than an interruption, and what lets the CLI share it
- * instead of opening a second corner of its own.
+ * makes it a place rather than an interruption, and what lets the other two
+ * share it instead of each opening a corner of its own.
  *
- * Two subjects, one band, because they are one question: something on this
+ * Three subjects, one band, because they are one question: something on this
  * machine is not the current version, and here is the one control that fixes
- * it. The app has already downloaded its update and only needs a restart; the
- * CLI still has to fetch, so its row carries the download it is doing.
+ * it. Each row is named for what it actually is — `Brainpod` the app,
+ * `Command line` the CLI, `Agent skill` the thing the coding agents read —
+ * in the same words Settings and the README use for them. They were once
+ * told apart by nothing but a capital letter and a monospace font, which is
+ * not a distinction.
  *
  * Nothing here paints a surface. The sidebar is a macOS vibrancy material and
  * a card stacked inside it would be a second translucent layer, so the band is
@@ -29,15 +36,49 @@ export function UpdatesBar(): ReactElement | null {
   const cli = useCli();
   const reduced = useReducedMotion() === true;
 
+  /*
+   * The same two reads the skill installer below already makes, so this costs
+   * one cache hit rather than a second scan of four directories.
+   */
+  const harnesses = useQuery(harnessesQuery());
+  const latestSkill = useQuery(latestSkillQuery());
+  const [writingSkill, setWritingSkill] = useState(false);
+  const [skillError, setSkillError] = useState<string | null>(null);
+
+  const skillVersion = latestSkill.data?.version ?? null;
+  const behind = staleHarnesses(harnesses.data ?? [], skillVersion);
+
+  const updateSkill = useCallback(async () => {
+    if (behind.length === 0 || writingSkill) return;
+
+    setWritingSkill(true);
+    setSkillError(null);
+
+    try {
+      // One download written into every agent that is behind; Rust answers
+      // with the whole state, so the fan below re-reads nothing.
+      const report = await installSkill(behind.map((harness) => harness.id));
+      queryClient.setQueryData(harnessesQuery().queryKey, report.harnesses);
+
+      const failed = report.results.filter((result) => result.error !== null);
+      if (failed.length > 0) setSkillError(failed[0]?.error ?? null);
+    } catch (cause) {
+      setSkillError(errorMessage(cause, 'Could not update the agent skill.'));
+    } finally {
+      setWritingSkill(false);
+    }
+  }, [behind, writingSkill]);
+
   const app = state.phase === 'ready' ? state.version : null;
   const installing = cli.progress !== null;
   /* An install in flight keeps the row it is running in, so the band does not
      vanish under the pointer the moment the new version lands. */
   const command = cli.stale || installing ? (cli.release?.version ?? null) : null;
+  const skill = (behind.length > 0 || writingSkill) && skillVersion !== null ? skillVersion : null;
 
   // An empty band holding a heading states nothing; the pods list takes the
   // space back instead.
-  if (app === null && command === null) return null;
+  if (app === null && command === null && skill === null) return null;
 
   return (
     <motion.div
@@ -72,7 +113,7 @@ export function UpdatesBar(): ReactElement | null {
 
         {command !== null && (
           <Row
-            name={<span className="font-mono text-ui-mono">brainpod</span>}
+            name="Command line"
             version={command}
             action="Update"
             busy={installing}
@@ -105,11 +146,27 @@ export function UpdatesBar(): ReactElement | null {
             )}
           </Row>
         )}
+
+        {skill !== null && (
+          <Row
+            name="Agent skill"
+            version={skill}
+            action="Update"
+            busy={writingSkill}
+            /* The row says `Agent skill`; the accessible name says which
+               agents, because that is what a count cannot carry and what the
+               button is actually about to write to. */
+            label={`Update the Brainpod agent skill in ${behind
+              .map((harness) => harness.name)
+              .join(', ')}`}
+            onAct={() => void updateSkill()}
+          />
+        )}
       </ul>
 
-      {cli.error !== null && (
+      {(cli.error ?? skillError) !== null && (
         <p role="alert" className="px-4 pt-1 text-ui-sm text-destructive">
-          {cli.error}
+          {cli.error ?? skillError}
         </p>
       )}
     </motion.div>
@@ -129,7 +186,8 @@ function Row({
   onAct,
   children,
 }: {
-  name: ReactNode;
+  /** What is behind, in the product's own word for it: `Command line`. */
+  name: string;
   version: string;
   action: string;
   /** The button's accessible name, which has to say what `Update` updates. */

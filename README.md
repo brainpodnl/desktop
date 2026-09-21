@@ -37,7 +37,9 @@ Launch it and sign in; the browser round trip writes the API token into the shar
 
 The app checks `releases/latest/download/latest.json` once per launch, installs a newer version in
 the background, and then offers a restart in the sidebar's **Updates** band — the same band the
-CLI uses, because they are one question: something on this machine is not the current version.
+CLI and the agent skill use, because they are one question: something on this machine is not the
+current version. Each row is named for what it is (`Brainpod`, `Command line`, `Agent skill`)
+rather than being told apart by a capital letter and a monospace font.
 The band is absent until there is something to act on, and it stays until acted on rather than
 being dismissible, since it occupies its own space in the rail instead of floating over the graph. Updater payloads are signature-verified against the
 public key baked into `src-tauri/tauri.conf.json`, so an unsigned or foreign build is never
@@ -73,7 +75,10 @@ verified on disk. Windows needs no prompt at all.
 
 An out-of-date CLI is offered in the sidebar's **Updates** band as well as here; both read one
 store (`src/lib/cli.ts`), so the two can never disagree about what is installed or what is
-published.
+published. The band offers an out-of-date agent skill the same way, updating every agent that
+has fallen behind in one download; its staleness rule is `src/lib/skills.ts`, shared with the
+fan at the foot of the sidebar. Only a skill this window installed can be called out of date —
+a directory it did not write carries no receipt, so there is no version to compare.
 
 A release is public for the ten minutes its build matrix takes, so the newest tag regularly
 carries no binaries yet; the window says so and offers the newest release that does have this
