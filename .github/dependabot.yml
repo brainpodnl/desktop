@@ -1,0 +1,31 @@
+version: 2
+
+# Three ecosystems, one day a week. Grouped because a desktop bundle is only
+# ever tested as a whole: reviewing sixteen single-dependency pull requests
+# costs more than the one build they all share.
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ['*']
+
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      frontend:
+        patterns: ['*']
+        update-types: [minor, patch]
+
+  - package-ecosystem: cargo
+    directory: /src-tauri
+    schedule:
+      interval: weekly
+    groups:
+      rust:
+        patterns: ['*']
+        update-types: [minor, patch]

@@ -1,0 +1,178 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  merge_group:
+    branches: [main]
+
+# A superseded run tells us nothing about the commit that replaced it, and the
+# bundle matrix is the most expensive thing in this repo.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  versions:
+    name: Versions agree
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      # Releases take their version from their tag, so these three matter only
+      # to whoever builds locally — but a local bundle whose installer, binary
+      # and updater manifest disagree is a confusing thing to debug, and the
+      # check costs a few seconds.
+      - name: Compare package.json, tauri.conf.json and Cargo.toml
+        run: |
+          set -euo pipefail
+          npm_version="$(jq -r .version package.json)"
+          tauri_version="$(jq -r .version src-tauri/tauri.conf.json)"
+          cargo_version="$(sed -n 's/^version = "\(.*\)"$/\1/p' src-tauri/Cargo.toml | head -n 1)"
+          echo "package.json=$npm_version tauri.conf.json=$tauri_version Cargo.toml=$cargo_version"
+          if [ "$npm_version" != "$tauri_version" ] || [ "$npm_version" != "$cargo_version" ]; then
+            echo "::error::version mismatch between package.json, tauri.conf.json and Cargo.toml"
+            exit 1
+          fi
+
+  web:
+    name: Frontend
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm typecheck
+
+      # The bundle jobs build the frontend through `beforeBuildCommand`, but
+      # this runs in a minute and fails the PR before the Rust matrix warms up.
+      - run: pnpm build
+
+  rust:
+    name: Rust
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      # Tauri links against the system webview even for `cargo check`, so the
+      # lint job needs the same libraries as a real Linux bundle.
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            file \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev \
+            patchelf \
+            wget
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ./src-tauri -> target
+
+      - name: Format
+        working-directory: src-tauri
+        run: cargo fmt --all --check
+
+      # `tauri build` refuses to start without the frontend output, and
+      # `generate_context!` reads `../dist` at compile time, so clippy needs it
+      # to exist. An empty directory is enough for a type-level check.
+      - name: Stub frontend output
+        run: mkdir -p dist && touch dist/index.html
+
+      - name: Clippy
+        working-directory: src-tauri
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+      - name: Test
+        working-directory: src-tauri
+        run: cargo test --locked
+
+  bundle:
+    name: Bundle ${{ matrix.label }}
+    needs: [web, rust]
+    runs-on: ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      # Host architectures only. The cross builds (Intel macOS, arm64 Linux)
+      # exercise the same code through a different linker and belong to the
+      # release matrix, where a broken one blocks a shipment rather than a PR.
+      matrix:
+        include:
+          - label: macOS (arm64)
+            platform: macos-latest
+          - label: Linux (x86_64)
+            platform: ubuntu-24.04
+          - label: Windows (x86_64)
+            platform: windows-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install system dependencies
+        if: matrix.platform == 'ubuntu-24.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            file \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev \
+            patchelf \
+            wget \
+            xdg-utils
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ./src-tauri -> target
+          key: bundle
+
+      - run: pnpm install --frozen-lockfile
+
+      # Updater artifacts need the private signing key, which pull requests
+      # from forks cannot read, so `tauri.ci.conf.json` turns them off. The
+      # installers themselves are the part worth proving here and they still
+      # build; they are simply unsigned.
+      - uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          args: --config tauri.ci.conf.json
+          uploadWorkflowArtifacts: true
+          workflowArtifactNamePattern: ci-[platform]-[arch]-[bundle]

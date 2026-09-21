@@ -1,0 +1,174 @@
+name: Release
+
+# Creating a release on GitHub is the whole release process: the release makes
+# the `v*` tag, this workflow builds every platform at that tag and uploads the
+# bundles onto the release that triggered it.
+#
+# The tag is also the version. Nothing has to be bumped beforehand — the build
+# stamps the tag's version into package.json, tauri.conf.json and Cargo.toml
+# before bundling, so the installer, the binary and the updater manifest cannot
+# disagree with the release they are attached to.
+#
+# The release is public for the few minutes the matrix takes, so its assets
+# appear after the fact. Users see that only as an update check that 404s and
+# stays quiet, because `latest.json` is uploaded with everything else.
+#
+# `workflow_dispatch` takes the same path: pick the tag in the ref selector to
+# rebuild a release when a single platform flakes, rather than re-cutting a
+# version.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  verify:
+    name: Verify tag
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+
+      # `release` events run on the tag the release points at, and so does a
+      # dispatch when the ref selector names a tag. A dispatch on a branch is
+      # the one way in here without a version to build.
+      - name: Require a tag
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        run: |
+          echo "::error::this workflow builds a released version; re-run it with a v* tag selected as the ref"
+          exit 1
+
+      # `v0.2.0` -> `0.2.0`, and nothing else gets to be a release. A tag the
+      # bundlers cannot parse as a version would otherwise fail five jobs deep.
+      - id: version
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "::error::tag $GITHUB_REF_NAME does not name a semver version"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Require an updater signing key
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if [ -z "${TAURI_SIGNING_PRIVATE_KEY}" ]; then
+            echo "::error::TAURI_SIGNING_PRIVATE_KEY is unset; installed apps could never verify this release"
+            exit 1
+          fi
+
+  bundle:
+    name: Bundle ${{ matrix.label }}
+    needs: verify
+    runs-on: ${{ matrix.platform }}
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: macOS (arm64)
+            platform: macos-latest
+            args: --target aarch64-apple-darwin
+          - label: macOS (x86_64)
+            platform: macos-latest
+            args: --target x86_64-apple-darwin
+          - label: Linux (x86_64)
+            platform: ubuntu-24.04
+            args: ''
+          # Native arm64 runners exist for public repositories. Building here
+          # rather than cross-compiling is what keeps the arm64 AppImage
+          # possible at all: its tooling has no cross-architecture mode.
+          - label: Linux (arm64)
+            platform: ubuntu-24.04-arm
+            args: ''
+          - label: Windows (x86_64)
+            platform: windows-latest
+            args: ''
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install system dependencies
+        if: startsWith(matrix.platform, 'ubuntu-')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            file \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev \
+            patchelf \
+            wget \
+            xdg-utils
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          # Only the macOS runners build for a second architecture; asking for
+          # these targets elsewhere just slows the toolchain install down.
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ./src-tauri -> target
+          key: release
+
+      - run: pnpm install --frozen-lockfile
+
+      # Written into the checkout, never committed: the release's tag is what
+      # this build is, and every bundler reads these three files.
+      - name: Stamp the version from the tag
+        shell: bash
+        run: node .github/scripts/stamp-version.mjs '${{ needs.verify.outputs.version }}'
+
+      - uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Signs the updater payload. Without it the bundles still build but
+          # no installed copy would accept them, which `verify` already refused.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # Apple code signing and notarization. The Tauri CLI reads these
+          # itself and skips both steps when they are empty, so the matrix keeps
+          # producing (unsigned, Gatekeeper-warned) macOS bundles until the
+          # secrets exist. See .github/RELEASING.md.
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          # The release already exists and already has notes: this only adds
+          # assets to it. `releaseId` names it directly on a release event; on a
+          # dispatch it is empty and `tagName` finds the same release instead.
+          releaseId: ${{ github.event.release.id }}
+          tagName: ${{ github.ref_name }}
+          # Only consulted if no release exists for the tag yet, which is the
+          # dispatch-on-an-untagged-release case.
+          releaseName: Brainpod ${{ needs.verify.outputs.version }}
+          releaseBody: Download the build for your platform below.
+          releaseDraft: false
+          # Uploads are the last step of a job that already took ten minutes,
+          # and a flaky upload should not cost the whole platform.
+          retryAttempts: 2
+          args: ${{ matrix.args }}
