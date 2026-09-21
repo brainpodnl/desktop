@@ -1,0 +1,74 @@
+[package]
+name = "brainpod-desktop"
+version = "0.1.0"
+edition = "2024"
+description = "Brainpod Desktop"
+publish = false
+
+[lib]
+name = "brainpod_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "brainpod-desktop"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0.102"
+axum = "0.8.8"
+# The agent skill ships as a repository tarball from GitHub, unpacked in memory.
+flate2 = "1.1"
+getrandom = "0.3.4"
+prost = "0.13.5"
+prost-types = "0.13.5"
+reqwest = { version = "0.12", default-features = false, features = [
+    "charset",
+    "http2",
+    "json",
+    "rustls-tls-webpki-roots",
+    "system-proxy",
+] }
+rustls = { version = "0.23.40", default-features = false, features = [
+    "ring",
+    "std",
+    "tls12",
+] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
+sha2 = "0.10"
+tar = "0.4.44"
+# Transparent windows on macOS go through a private AppKit API, which Tauri
+# gates behind this feature plus `app.macOSPrivateApi` in tauri.conf.json.
+tauri = { version = "2", features = ["macos-private-api"] }
+tauri-plugin-opener = "2"
+# The frontend restarts the app once an update is staged, which is the one step
+# the updater cannot take for itself.
+tauri-plugin-process = "2"
+tauri-plugin-updater = "2"
+tokio = { version = "1.52.3", features = [
+    "io-util",
+    "macros",
+    "net",
+    # The installed `brainpod` is asked its own version, which is a child
+    # process that must not be waited on by blocking an async command.
+    "process",
+    "rt-multi-thread",
+    "sync",
+    "time",
+] }
+tokio-stream = "0.1.17"
+toml = "0.9.5"
+tonic = { version = "0.12.3", features = ["tls", "tls-webpki-roots"] }
+uuid = { version = "1.16.0", features = ["v4"] }
+
+# Already in the tree through Tauri, but the vibrancy call is ours to make.
+[target.'cfg(target_os = "macos")'.dependencies]
+window-vibrancy = "0.6"
+
+[target."cfg(windows)".dependencies]
+zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
+
+[build-dependencies]
+protox = "0.7.1"
+tauri-build = { version = "2", features = [] }
+tonic-build = "0.12.3"
