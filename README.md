@@ -36,9 +36,75 @@ Launch it and sign in; the browser round trip writes the API token into the shar
 ### Updates
 
 The app checks `releases/latest/download/latest.json` once per launch, installs a newer version in
-the background, and then offers a restart. Updater payloads are signature-verified against the
+the background, and then offers a restart in the sidebar's **Updates** band — the same band the
+CLI uses, because they are one question: something on this machine is not the current version.
+The band is absent until there is something to act on, and it stays until acted on rather than
+being dismissible, since it occupies its own space in the rail instead of floating over the graph. Updater payloads are signature-verified against the
 public key baked into `src-tauri/tauri.conf.json`, so an unsigned or foreign build is never
 accepted. A failed or unreachable check is silent.
+
+### Command line
+
+Settings ▸ **Command line** installs the [`brainpod` CLI](https://github.com/brainpodnl/cli) —
+the tool this window shares its config file and API token with, and the one the agent skill
+drives.
+
+A `brainpod` that is already on this machine is **updated where it stands**, so a developer ends
+up with one CLI kept current rather than two competing on `PATH`. Only a real file is adopted: a
+symlink in `/opt/homebrew/bin` or `~/.local/bin` points into a package manager's own store, and
+writing through it would overwrite that store's file, so such a copy is reported and left alone.
+A machine with no CLI on it gets one in a directory the platform already puts on `PATH` —
+`/usr/local/bin` on macOS and Linux (the first line of `/etc/paths`, and where Zed, VS Code and
+OrbStack put theirs), `%LOCALAPPDATA%\Microsoft\WindowsApps` on Windows. **Nothing in your shell
+profile is ever edited.**
+
+| OS      | Architecture      | Release asset                   |
+| ------- | ----------------- | ------------------------------- |
+| macOS   | Apple silicon     | `brainpod-arm64-macos.tar.gz`   |
+| macOS   | Intel             | `brainpod-amd64-macos.tar.gz`   |
+| Linux   | `arm64`           | `brainpod-arm64-linux.tar.gz`   |
+| Linux   | `x86_64`          | `brainpod-amd64-linux.tar.gz`   |
+| Windows | `x86_64`          | `brainpod-amd64-windows.zip`    |
+
+The download is checked against the release's own `SHA256SUMS` before anything is written, and
+the binary is staged in the app's data directory first — so on macOS and Linux the one
+authorization prompt covers a single `install(1)` of a file that is already complete and
+verified on disk. Windows needs no prompt at all.
+
+An out-of-date CLI is offered in the sidebar's **Updates** band as well as here; both read one
+store (`src/lib/cli.ts`), so the two can never disagree about what is installed or what is
+published.
+
+A release is public for the ten minutes its build matrix takes, so the newest tag regularly
+carries no binaries yet; the window says so and offers the newest release that does have this
+platform's build. Staleness is judged from the install receipt — the release this window
+actually fetched — because `brainpodnl/cli` stamps its binaries from a `VERSION` file rather
+than from the tag, and a binary's own `--version` is therefore not comparable to a release name.
+Removal is offered only for a binary this window itself wrote and that is still byte-for-byte
+what it wrote; an adopted install is kept current but never deleted.
+
+### Agent skill
+
+The fan of marks at the foot of the sidebar installs the
+[`brainpod` Agent Skill](https://github.com/brainpodnl/skills) into the coding agents on this
+machine, so they can deploy, operate and debug a pod with the `brainpod` CLI. A tile stands lit
+for an agent that already holds it.
+
+| Agent       | Skills directory                                            |
+| ----------- | ----------------------------------------------------------- |
+| Claude Code | `~/.claude/skills/brainpod`                                  |
+| Codex       | `~/.agents/skills/brainpod` (the shared Agent Skills path)   |
+| Cursor      | `~/.cursor/skills/brainpod`                                  |
+| Gemini CLI  | `~/.gemini/skills/brainpod`                                  |
+
+Only agents this machine actually has are listed — one that has run here, or whose CLI is on
+`PATH`, plus any directory that already holds the skill. Every path is home-relative, so Windows
+resolves the same table under `%USERPROFILE%`. Installing
+downloads `skills/brainpod` from the repository's default branch, writes it through a staging
+directory next to the target, and leaves a `.brainpod-desktop.json` receipt carrying the version.
+That receipt is what lets the window call an install current or out of date — and what makes it
+refuse to delete a skill directory it did not write, such as a symlink into your own clone. An
+agent reads its skills at startup, so restart one that is already running.
 
 ## Development
 
