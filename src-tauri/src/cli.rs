@@ -817,37 +817,120 @@ fn elevated(_script: &str) -> Result<()> {
     bail!("This platform installs without elevation")
 }
 
+/// A name beside the destination, on the filesystem the binary will live on,
+/// so the last step of an install is a rename rather than a write into the
+/// file a shell is about to run.
+#[cfg(not(windows))]
+fn staging(directory: &Path) -> PathBuf {
+    directory.join(format!(".brainpod-install-{}", uuid::Uuid::new_v4()))
+}
+
 /// Moves the staged binary into place, as root where the directory needs it.
 ///
-/// `install(1)` is used rather than a rename because it sets the mode and the
-/// owner in the same step, so the file is never briefly present and writable
-/// by the user in a directory the rest of the system trusts.
+/// The binary is copied beside its destination and renamed over it, never
+/// written through it. A `brainpod` already on disk is usually mode 555 — the
+/// CLI's own installer, Homebrew and Nix all write read-only executables — so
+/// opening it for writing fails with a permission error even in a directory
+/// this user owns outright, and a copy that is currently running refuses to be
+/// truncated at any mode. A rename replaces the directory entry, which asks
+/// nothing of the old file, needs nothing but the directory, and leaves what
+/// was there standing if any step fails.
 #[cfg(not(windows))]
-fn place(staged: &Path, directory: &Path, target: &Path) -> Result<()> {
+fn place(home: &Path, staged: &Path, directory: &Path, target: &Path) -> Result<()> {
     if writable(directory) {
-        fs::create_dir_all(directory)
-            .with_context(|| format!("Could not create `{}`", directory.display()))?;
-        fs::copy(staged, target)
-            .with_context(|| format!("Could not write `{}`", target.display()))?;
-        return set_executable(target);
+        match place_as_user(staged, directory, target) {
+            Ok(()) => return Ok(()),
+            // A directory this user can create files in can still refuse the
+            // replacement: an ACL, or a sticky directory holding a file
+            // somebody else owns. That is what the prompt below is for, and
+            // it is the only thing that raises one.
+            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {}
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("Could not write `{}`", target.display()));
+            }
+        }
     }
 
-    let group = if cfg!(target_os = "macos") {
-        "wheel"
-    } else {
-        "root"
-    };
+    place_elevated(home, staged, directory, target)
+}
+
+/// The unprivileged half, kept at `io::Result` so the caller can tell a
+/// permission the system would grant on request from a failure no password
+/// fixes.
+#[cfg(not(windows))]
+fn place_as_user(staged: &Path, directory: &Path, target: &Path) -> std::io::Result<()> {
+    fs::create_dir_all(directory)?;
+    // An earlier run killed between the copy and the rename left a dotfile in
+    // a directory shared with every other tool on the machine.
+    sweep(directory);
+
+    let beside = staging(directory);
+    let placed = fs::copy(staged, &beside)
+        .and_then(|_| set_mode(&beside))
+        .and_then(|()| fs::rename(&beside, target));
+
+    if placed.is_err() {
+        let _ = fs::remove_file(&beside);
+    }
+
+    placed
+}
+
+/// Who the binary belongs to once root has written it.
+///
+/// A directory inside the user's own home stays the user's: root's copy there
+/// would turn a one-off authorization into a password for every future update
+/// of a file in a home directory. Everywhere else the binary belongs to root,
+/// like the directory holding it.
+#[cfg(not(windows))]
+fn ownership(home: &Path, directory: &Path) -> (String, String) {
+    use std::os::unix::fs::MetadataExt;
+
+    let root = (
+        "root".to_owned(),
+        if cfg!(target_os = "macos") {
+            "wheel".to_owned()
+        } else {
+            "root".to_owned()
+        },
+    );
+
+    if !directory.starts_with(home) {
+        return root;
+    }
+
+    match fs::metadata(home) {
+        Ok(owner) => (owner.uid().to_string(), owner.gid().to_string()),
+        Err(_) => root,
+    }
+}
+
+/// The privileged half: one authorization, spent on a file that is already
+/// complete and verified on disk.
+///
+/// `install(1)` rather than a copy because it sets the mode and the owner in
+/// one step, and it writes beside the target rather than onto it so the same
+/// rename finishes the job — the binary a shell runs is replaced whole or not
+/// at all.
+#[cfg(not(windows))]
+fn place_elevated(home: &Path, staged: &Path, directory: &Path, target: &Path) -> Result<()> {
+    let (owner, group) = ownership(home, directory);
+    let beside = shell_quote(&staging(directory).display().to_string());
 
     elevated(&format!(
-        "/bin/mkdir -p {} && /usr/bin/install -o root -g {group} -m 755 {} {}",
-        shell_quote(&directory.display().to_string()),
-        shell_quote(&staged.display().to_string()),
-        shell_quote(&target.display().to_string()),
+        "/bin/mkdir -p {directory} \
+         && /usr/bin/install -o {owner} -g {group} -m 755 {staged} {beside} \
+         && /bin/mv -f {beside} {target} \
+         || {{ /bin/rm -f {beside}; exit 1; }}",
+        directory = shell_quote(&directory.display().to_string()),
+        staged = shell_quote(&staged.display().to_string()),
+        target = shell_quote(&target.display().to_string()),
     ))
 }
 
 #[cfg(windows)]
-fn place(staged: &Path, directory: &Path, target: &Path) -> Result<()> {
+fn place(_home: &Path, staged: &Path, directory: &Path, target: &Path) -> Result<()> {
     fs::create_dir_all(directory)
         .with_context(|| format!("Could not create `{}`", directory.display()))?;
     fs::copy(staged, target).with_context(|| format!("Could not write `{}`", target.display()))?;
@@ -855,11 +938,15 @@ fn place(staged: &Path, directory: &Path, target: &Path) -> Result<()> {
 }
 
 #[cfg(not(windows))]
-fn set_executable(path: &Path) -> Result<()> {
+fn set_mode(path: &Path) -> std::io::Result<()> {
     use std::os::unix::fs::PermissionsExt;
 
     fs::set_permissions(path, fs::Permissions::from_mode(0o755))
-        .with_context(|| format!("Could not make `{}` executable", path.display()))
+}
+
+#[cfg(not(windows))]
+fn set_executable(path: &Path) -> Result<()> {
+    set_mode(path).with_context(|| format!("Could not make `{}` executable", path.display()))
 }
 
 /// Downloads the release, checks it against the release's own `SHA256SUMS`,
@@ -940,7 +1027,7 @@ pub async fn install(
             .with_context(|| format!("Could not keep a copy of `{}`", target.display()))?;
     }
 
-    let placed = place(&staged, &directory, &target);
+    let placed = place(home, &staged, &directory, &target);
     let _ = fs::remove_file(&staged);
     placed?;
 
@@ -1011,14 +1098,28 @@ pub fn remove(home: &Path, local_data: &Path, data_dir: &Path) -> Result<()> {
         );
     }
 
-    if writable(&directory) {
-        fs::remove_file(&target)
-            .with_context(|| format!("Could not remove `{}`", target.display()))?;
-    } else {
-        elevated(&format!(
-            "/bin/rm -f {}",
-            shell_quote(&target.display().to_string())
-        ))?;
+    // Unlinking needs the directory, not the file, so a read-only binary in a
+    // directory this user owns goes without a prompt. A sticky directory, or
+    // one this user cannot write at all, is what raises one.
+    let refused = match writable(&directory) {
+        true => fs::remove_file(&target)
+            .err()
+            .filter(|error| error.kind() != std::io::ErrorKind::NotFound),
+        false => Some(std::io::ErrorKind::PermissionDenied.into()),
+    };
+
+    match refused {
+        Some(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+            elevated(&format!(
+                "/bin/rm -f {}",
+                shell_quote(&target.display().to_string())
+            ))?;
+        }
+        Some(error) => {
+            return Err(error)
+                .with_context(|| format!("Could not remove `{}`", target.display()));
+        }
+        None => {}
     }
 
     let _ = fs::remove_file(data_dir.join(RECEIPT));
@@ -1223,5 +1324,85 @@ mod tests {
         assert_eq!(present([store.clone()]), vec![real]);
 
         let _ = fs::remove_dir_all(&root);
+    }
+
+    /// The update that failed with `Permission denied (os error 13)` in a
+    /// directory the user owns outright: the `brainpod` already there was mode
+    /// 555 — what the CLI's own installer writes — so opening it for writing
+    /// was refused even though replacing it needs no authorization at all.
+    #[cfg(unix)]
+    #[test]
+    fn replaces_a_read_only_binary_without_authorization() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = std::env::temp_dir().join(format!("bp-readonly-{}", uuid::Uuid::new_v4()));
+        let bin = root.join("bin");
+        fs::create_dir_all(&bin).unwrap();
+
+        let target = bin.join(BINARY);
+        fs::write(&target, b"old").unwrap();
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o555)).unwrap();
+
+        let staged = root.join("staged");
+        fs::write(&staged, b"new").unwrap();
+
+        place_as_user(&staged, &bin, &target).unwrap();
+
+        assert_eq!(fs::read(&target).unwrap(), b"new");
+        assert_eq!(
+            fs::metadata(&target).unwrap().permissions().mode() & 0o777,
+            0o755
+        );
+        // Nothing of the replacement is left beside the binary.
+        assert_eq!(fs::read_dir(&bin).unwrap().count(), 1);
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// A directory this user cannot write is the only thing that should reach
+    /// the authorization prompt, and it has to be reported as a permission
+    /// rather than as some other failure for the prompt to be offered.
+    #[cfg(unix)]
+    #[test]
+    fn a_directory_this_user_cannot_write_reports_a_permission() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = std::env::temp_dir().join(format!("bp-denied-{}", uuid::Uuid::new_v4()));
+        let bin = root.join("bin");
+        fs::create_dir_all(&bin).unwrap();
+
+        let staged = root.join("staged");
+        fs::write(&staged, b"new").unwrap();
+        fs::set_permissions(&bin, fs::Permissions::from_mode(0o555)).unwrap();
+
+        let error = place_as_user(&staged, &bin, &bin.join(BINARY)).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
+
+        fs::set_permissions(&bin, fs::Permissions::from_mode(0o755)).unwrap();
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// Root's copy in a home directory would make every later update ask for a
+    /// password; outside the home the binary belongs to root like its
+    /// directory.
+    #[cfg(unix)]
+    #[test]
+    fn an_elevated_install_in_the_home_directory_stays_the_users() {
+        use std::os::unix::fs::MetadataExt;
+
+        let home = std::env::temp_dir().join(format!("bp-own-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(home.join(".local").join("bin")).unwrap();
+        let owner = fs::metadata(&home).unwrap();
+
+        assert_eq!(
+            ownership(&home, &home.join(".local").join("bin")),
+            (owner.uid().to_string(), owner.gid().to_string())
+        );
+        assert_eq!(
+            ownership(&home, Path::new("/usr/local/bin")).0,
+            "root".to_owned()
+        );
+
+        let _ = fs::remove_dir_all(&home);
     }
 }
