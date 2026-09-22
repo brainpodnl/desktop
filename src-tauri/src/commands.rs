@@ -359,9 +359,11 @@ pub async fn cli_remove(app: AppHandle) -> Result<CliStatus> {
     let (local_data, data_dir) = app_dirs(&app)?;
 
     let removing = (home.clone(), local_data.clone(), data_dir.clone());
-    tauri::async_runtime::spawn_blocking(move || cli::remove(&removing.0, &removing.1, &removing.2))
-        .await
-        .map_err(|error| Error::message(format!("The removal did not finish: {error}")))??;
+    tauri::async_runtime::spawn_blocking(move || {
+        cli::remove(&removing.0, &removing.1, &removing.2)
+    })
+    .await
+    .map_err(|error| Error::message(format!("The removal did not finish: {error}")))??;
 
     Ok(cli::status(&home, &local_data, &data_dir).await)
 }

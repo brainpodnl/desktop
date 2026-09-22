@@ -32,7 +32,11 @@ const INITIAL_HEIGHT: f64 = 480.0;
 pub fn install_menu(app: &AppHandle) -> Result<()> {
     let menu = Menu::default(app)?;
 
-    let accelerator = if cfg!(target_os = "macos") { "Cmd+," } else { "Ctrl+," };
+    let accelerator = if cfg!(target_os = "macos") {
+        "Cmd+,"
+    } else {
+        "Ctrl+,"
+    };
     let item = MenuItem::with_id(app, MENU_ITEM_ID, "Settings…", true, Some(accelerator))?;
     let separator = PredefinedMenuItem::separator(app)?;
 

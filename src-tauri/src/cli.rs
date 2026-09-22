@@ -37,7 +37,11 @@ const RELEASE_DEPTH: usize = 10;
 /// this window can claim the bytes it wrote are the bytes that were built.
 const CHECKSUMS: &str = "SHA256SUMS";
 
-const BINARY: &str = if cfg!(windows) { "brainpod.exe" } else { "brainpod" };
+const BINARY: &str = if cfg!(windows) {
+    "brainpod.exe"
+} else {
+    "brainpod"
+};
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 
@@ -340,7 +344,9 @@ fn writable(directory: &Path) -> bool {
 async fn version_of(binary: &Path) -> Option<String> {
     let output = tokio::time::timeout(
         VERSION_TIMEOUT,
-        tokio::process::Command::new(binary).arg("--version").output(),
+        tokio::process::Command::new(binary)
+            .arg("--version")
+            .output(),
     )
     .await
     .ok()?
@@ -442,7 +448,7 @@ fn target(home: &Path, local_data: &Path, data_dir: &Path) -> (PathBuf, bool) {
         }
     }
 
-    match installs(home, &fallback.parent().unwrap_or(&fallback).to_path_buf())
+    match installs(home, fallback.parent().unwrap_or(&fallback))
         .into_iter()
         .next()
     {
@@ -578,12 +584,8 @@ fn choose(releases: &[Release], want: &str) -> Result<CliRelease> {
 
 /// What the CLI is publishing for this machine right now.
 pub async fn latest() -> Result<CliRelease> {
-    let want = asset().ok_or_else(|| {
-        anyhow!(
-            "The Brainpod CLI publishes no build for {}",
-            platform()
-        )
-    })?;
+    let want =
+        asset().ok_or_else(|| anyhow!("The Brainpod CLI publishes no build for {}", platform()))?;
 
     let response = http()?
         .get(RELEASES_URL)
@@ -608,11 +610,7 @@ pub async fn latest() -> Result<CliRelease> {
 /// The body is accumulated chunk by chunk against the cap rather than buffered
 /// and measured afterwards: `Content-Length` is absent under a chunked
 /// response, so measuring what has already been allocated is not a limit.
-async fn download(
-    url: &str,
-    total: u64,
-    report: &impl Fn(Progress),
-) -> Result<Vec<u8>> {
+async fn download(url: &str, total: u64, report: &impl Fn(Progress)) -> Result<Vec<u8>> {
     let mut response = http()?
         .get(url)
         .send()
@@ -852,8 +850,7 @@ fn place(staged: &Path, directory: &Path, target: &Path) -> Result<()> {
 fn place(staged: &Path, directory: &Path, target: &Path) -> Result<()> {
     fs::create_dir_all(directory)
         .with_context(|| format!("Could not create `{}`", directory.display()))?;
-    fs::copy(staged, target)
-        .with_context(|| format!("Could not write `{}`", target.display()))?;
+    fs::copy(staged, target).with_context(|| format!("Could not write `{}`", target.display()))?;
     Ok(())
 }
 
@@ -1004,8 +1001,8 @@ pub fn remove(home: &Path, local_data: &Path, data_dir: &Path) -> Result<()> {
         );
     }
 
-    let bytes = fs::read(&target)
-        .with_context(|| format!("Could not read `{}`", target.display()))?;
+    let bytes =
+        fs::read(&target).with_context(|| format!("Could not read `{}`", target.display()))?;
 
     if digest(&bytes) != receipt.sha256 {
         bail!(
@@ -1082,7 +1079,10 @@ mod tests {
 
     #[test]
     fn refuses_a_platform_no_release_builds() {
-        let releases = [release("v0.0.6", &["brainpod-amd64-linux.tar.gz", "SHA256SUMS"])];
+        let releases = [release(
+            "v0.0.6",
+            &["brainpod-amd64-linux.tar.gz", "SHA256SUMS"],
+        )];
 
         assert!(choose(&releases, "brainpod-arm64-macos.tar.gz").is_err());
     }
@@ -1119,16 +1119,16 @@ mod tests {
 
     #[test]
     fn a_shell_word_survives_a_quote_in_a_home_directory_name() {
-        assert_eq!(shell_quote("/Users/o'brien/bin"), "'/Users/o'\\''brien/bin'");
+        assert_eq!(
+            shell_quote("/Users/o'brien/bin"),
+            "'/Users/o'\\''brien/bin'"
+        );
     }
 
     #[cfg(target_os = "macos")]
     #[test]
     fn an_applescript_literal_survives_backslashes_and_quotes() {
-        assert_eq!(
-            applescript_quote(r#"a "b" c\d"#),
-            r#""a \"b\" c\\d""#
-        );
+        assert_eq!(applescript_quote(r#"a "b" c\d"#), r#""a \"b\" c\\d""#);
     }
 
     #[test]
@@ -1145,7 +1145,8 @@ mod tests {
         header.set_size(payload.len() as u64);
         header.set_mode(0o755);
         header.set_cksum();
-        tar.append_data(&mut header, "brainpod", &payload[..]).unwrap();
+        tar.append_data(&mut header, "brainpod", &payload[..])
+            .unwrap();
 
         let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
         std::io::Write::write_all(&mut gz, &tar.into_inner().unwrap()).unwrap();
@@ -1164,7 +1165,8 @@ mod tests {
         let mut header = tar::Header::new_gnu();
         header.set_size(payload.len() as u64);
         header.set_cksum();
-        tar.append_data(&mut header, "README", &payload[..]).unwrap();
+        tar.append_data(&mut header, "README", &payload[..])
+            .unwrap();
 
         let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
         std::io::Write::write_all(&mut gz, &tar.into_inner().unwrap()).unwrap();

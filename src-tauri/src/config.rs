@@ -217,7 +217,10 @@ mod tests {
         let written = Config::load(&path).unwrap();
         assert_eq!(written.pod.as_deref(), Some("foxes-vanish"));
         assert_eq!(written.api_token.as_deref(), Some("token"));
-        assert_eq!(written.endpoint.as_deref(), Some("https://api.example.test"));
+        assert_eq!(
+            written.endpoint.as_deref(),
+            Some("https://api.example.test")
+        );
 
         store_pod(Some("   ".to_owned())).unwrap();
         assert_eq!(Config::load(&path).unwrap().pod, None);
@@ -233,7 +236,10 @@ mod tests {
         assert!(settings.pod_from_environment);
         // The file still says what the window wrote; the environment merely
         // outranks it while it is set.
-        assert_eq!(Config::load(&path).unwrap().pod.as_deref(), Some("foxes-vanish"));
+        assert_eq!(
+            Config::load(&path).unwrap().pod.as_deref(),
+            Some("foxes-vanish")
+        );
 
         unsafe {
             std::env::remove_var("BRAINPOD_POD");
