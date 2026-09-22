@@ -12,6 +12,10 @@ mod tunnel;
 
 pub mod proto {
     pub mod tunnel {
+        // tonic hands every RPC back a `Result<_, tonic::Status>`, and `Status`
+        // is large enough that clippy objects to generated code nobody here
+        // writes or can shrink.
+        #[allow(clippy::result_large_err)]
         pub mod v1 {
             tonic::include_proto!("brainpod.tunnel.v1");
         }

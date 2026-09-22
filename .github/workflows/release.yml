@@ -140,6 +140,33 @@ jobs:
         shell: bash
         run: node .github/scripts/stamp-version.mjs '${{ needs.verify.outputs.version }}'
 
+      # macOS code signing and notarization. A step-level `env:` entry for an
+      # unset secret is an empty string, not an absent variable, and the Tauri
+      # CLI treats the mere presence of APPLE_CERTIFICATE as "sign this" — it
+      # then runs `security import` on an empty certificate and the whole
+      # bundle fails. Exporting only the values that exist keeps unsigned
+      # macOS builds working while preserving the promise that setting the six
+      # secrets is the entire configuration. See .github/RELEASING.md.
+      - name: Export Apple signing secrets when they exist
+        if: startsWith(matrix.platform, 'macos')
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD \
+            APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+            value="${!name}"
+            [ -n "$value" ] || continue
+            printf '%s<<__APPLE_SECRET__\n%s\n__APPLE_SECRET__\n' "$name" "$value" >> "$GITHUB_ENV"
+            echo "exported $name"
+          done
+
       - uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -147,16 +174,6 @@ jobs:
           # no installed copy would accept them, which `verify` already refused.
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          # Apple code signing and notarization. The Tauri CLI reads these
-          # itself and skips both steps when they are empty, so the matrix keeps
-          # producing (unsigned, Gatekeeper-warned) macOS bundles until the
-          # secrets exist. See .github/RELEASING.md.
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
           # The release already exists and already has notes: this only adds
           # assets to it. `releaseId` names it directly on a release event; on a
