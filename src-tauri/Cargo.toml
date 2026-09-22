@@ -63,7 +63,7 @@ uuid = { version = "1.16.0", features = ["v4"] }
 
 # Already in the tree through Tauri, but the vibrancy call is ours to make.
 [target.'cfg(target_os = "macos")'.dependencies]
-window-vibrancy = "0.6"
+window-vibrancy = "0.8"
 
 [target."cfg(windows)".dependencies]
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
