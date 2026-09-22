@@ -1116,8 +1116,7 @@ pub fn remove(home: &Path, local_data: &Path, data_dir: &Path) -> Result<()> {
             ))?;
         }
         Some(error) => {
-            return Err(error)
-                .with_context(|| format!("Could not remove `{}`", target.display()));
+            return Err(error).with_context(|| format!("Could not remove `{}`", target.display()));
         }
         None => {}
     }
