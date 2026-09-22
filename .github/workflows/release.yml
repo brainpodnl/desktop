@@ -154,15 +154,22 @@ jobs:
         shell: bash
         run: node .github/scripts/stamp-version.mjs '${{ needs.verify.outputs.version }}'
 
-      # macOS code signing and notarization. A step-level `env:` entry for an
-      # unset secret is an empty string, not an absent variable, and the Tauri
-      # CLI treats the mere presence of APPLE_CERTIFICATE as "sign this" — it
-      # then runs `security import` on an empty certificate and the whole
-      # bundle fails. Exporting only the values that exist keeps unsigned
-      # macOS builds working while preserving the promise that setting the six
-      # secrets is the entire configuration. See .github/RELEASING.md.
-      - name: Export Apple signing secrets when they exist
-        if: startsWith(matrix.platform, 'macos')
+      # macOS code signing and notarization, gated on the `MACOS_SIGNING`
+      # repository variable. Apple's notary service puts no upper bound on how
+      # long a submission sits in `In Progress`, and `notarytool --wait` blocks
+      # until it answers, so a backlog at Apple becomes a release that never
+      # ships. The variable is the switch: `on` signs and notarizes, anything
+      # else builds macOS unsigned and the signed bundles are produced locally
+      # and uploaded by hand. The six secrets stay loaded either way, so
+      # turning it back on is one `gh variable set`.
+      #
+      # A step-level `env:` entry for an unset secret is an empty string, not
+      # an absent variable, and tauri-bundler builds its temporary keychain
+      # from the mere presence of APPLE_CERTIFICATE — it would then run
+      # `security import` on an empty certificate and fail the bundle. Only
+      # non-empty values are exported. See .github/RELEASING.md.
+      - name: Export Apple signing secrets
+        if: ${{ startsWith(matrix.platform, 'macos') && vars.MACOS_SIGNING == 'on' }}
         shell: bash
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}

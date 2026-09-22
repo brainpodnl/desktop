@@ -125,21 +125,102 @@ is stranded on its current version: a new key would produce signatures the
 shipped `pubkey` rejects, and the only way out is asking every user to download
 a fresh build by hand.
 
-### macOS signing and notarization (optional, not yet configured)
+### macOS signing and notarization (configured, currently off in CI)
 
-Without these, macOS bundles still build and upload, but Gatekeeper refuses to
-open them on a normal double-click. Set all six and the release workflow signs
-and notarizes with no further edits — the Tauri CLI reads them directly and
-skips both steps while they are empty.
+All six secrets are loaded, but the macOS jobs only use them when the
+`MACOS_SIGNING` repository variable is exactly `on`. It is `off`, so CI builds
+macOS unsigned and signed bundles are produced locally instead.
+
+The reason is Apple, not the configuration: `notarytool --wait` blocks until
+the notary service returns a verdict and that service publishes no upper bound.
+Submissions from this certificate sat in `In Progress` past 107 minutes with
+`Developer ID Notary Service` reporting `operational`, which matches the
+backlog other teams reported through September 2026 and Apple's own note that
+a new signing identity is held for additional analysis until the service
+learns to recognise it. A release must not be hostage to that.
+
+```sh
+gh variable set MACOS_SIGNING --repo brainpodnl/desktop --body on   # re-enable
+```
+
+With it `on`, each macOS job signs the `.app`, notarizes it, staples the
+ticket, and builds the `.dmg` and updater tarball around the stapled bundle.
+`release.yml` forwards only non-empty secrets, because an empty
+`APPLE_CERTIFICATE` would make the bundler run `security import` on nothing
+and fail.
 
 | Secret                       | Value                                                            |
 | ---------------------------- | ---------------------------------------------------------------- |
-| `APPLE_CERTIFICATE`          | base64 of the Developer ID Application `.p12` (`base64 -i cert.p12`) |
+| `APPLE_CERTIFICATE`          | base64 of the Developer ID Application `.p12` (`openssl base64 -A -in cert.p12`) |
 | `APPLE_CERTIFICATE_PASSWORD` | password used when exporting that `.p12`                          |
-| `APPLE_SIGNING_IDENTITY`     | e.g. `Developer ID Application: Brainpod B.V. (TEAMID)`           |
-| `APPLE_ID`                   | Apple account email                                               |
+| `APPLE_SIGNING_IDENTITY`     | `Developer ID Application: CloudProud B.V. (97JW6XK5WV)`          |
+| `APPLE_ID`                   | `jeroen@rinzema.dev`                                              |
 | `APPLE_PASSWORD`             | an app-specific password, not the account password                |
-| `APPLE_TEAM_ID`              | 10-character team identifier                                      |
+| `APPLE_TEAM_ID`              | `97JW6XK5WV`                                                      |
+
+It is all six or none. `tauri-bundler` only builds its temporary keychain when
+`APPLE_CERTIFICATE` and `APPLE_CERTIFICATE_PASSWORD` are both present; with
+only `APPLE_SIGNING_IDENTITY` set it looks for that identity in the runner's
+empty keychain and `codesign` fails. `APPLE_SIGNING_IDENTITY` must also be a
+substring of the certificate's own common name or the bundler refuses the pair
+outright. Notarization prefers the Apple ID triple and falls back to
+`APPLE_API_KEY`/`APPLE_API_ISSUER`/`APPLE_API_KEY_PATH`; missing credentials
+only warn, wrong ones fail the job.
+
+The certificate expires 2031-09-17. Bundles signed before then keep working
+afterwards — the notarization ticket and the secure timestamp outlive it — but
+no new build can be signed until the certificate is replaced.
+
+To verify a published build:
+
+```sh
+codesign -dv --verbose=4 /Applications/Brainpod.app
+xcrun stapler validate /Applications/Brainpod.app
+spctl -a -vvv -t install /Applications/Brainpod.app
+```
+
+### Signing a macOS build locally
+
+While `MACOS_SIGNING` is `off`, the macOS assets on a release come from a Mac
+that holds the Developer ID certificate in its login keychain. Credentials live
+in a `notarytool` keychain profile rather than in the shell:
+
+```sh
+xcrun notarytool store-credentials brainpod \
+  --apple-id jeroen@rinzema.dev --team-id 97JW6XK5WV
+```
+
+Build one architecture at a time, from a checkout of the tag being released so
+the bundled version matches:
+
+```sh
+export APPLE_SIGNING_IDENTITY='Developer ID Application: CloudProud B.V. (97JW6XK5WV)'
+export APPLE_ID=jeroen@rinzema.dev APPLE_TEAM_ID=97JW6XK5WV
+export APPLE_PASSWORD="$(security find-generic-password -s 'com.apple.gke.notary.tool' -a brainpod -w)"
+export TAURI_SIGNING_PRIVATE_KEY="$(cat ~/.tauri/brainpod-desktop-updater.key)"
+export TAURI_SIGNING_PRIVATE_KEY_PASSWORD=''
+pnpm tauri build --target aarch64-apple-darwin
+pnpm tauri build --target x86_64-apple-darwin
+```
+
+The certificate is already in the keychain, so `APPLE_CERTIFICATE` must stay
+unset — setting it would make the bundler import a second copy into a throwaway
+keychain for no reason. Each build blocks on notarization exactly as CI did; it
+is merely a wait nobody is paying runner time for.
+
+Then upload, replacing the unsigned assets the release already carries:
+
+```sh
+cd src-tauri/target/aarch64-apple-darwin/release/bundle
+gh release upload v0.1.0 --repo brainpodnl/desktop --clobber \
+  dmg/Brainpod_0.1.0_aarch64.dmg macos/Brainpod.app.tar.gz macos/Brainpod.app.tar.gz.sig
+```
+
+The updater artifacts are renamed per platform and `latest.json` carries the
+`.sig` contents inline, so the two `darwin-*` signature fields in `latest.json`
+have to be replaced by hand to match the locally built tarballs. Verify with
+the three commands above before uploading; an unstapled bundle still passes
+Gatekeeper on a networked Mac, but only a stapled one passes offline.
 
 ### Windows signing (optional, not yet configured)
 
