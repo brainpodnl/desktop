@@ -435,7 +435,7 @@ dependencies = [
  "anyhow",
  "axum 0.8.9",
  "flate2",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "prost",
  "prost-types",
  "protox",
