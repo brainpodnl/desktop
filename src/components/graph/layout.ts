@@ -10,9 +10,56 @@ import type { Resource } from '@/lib/bridge';
  * the height computed here, so the cards and the edge anchors can never
  * disagree about what a card occupies.
  */
-export type GraphNode = { resource: Resource; x: number; y: number; width: number; height: number };
+export type GraphNode = {
+  resource: Resource;
+  /** The disks this card mounts, drawn on its own foot rather than as nodes. */
+  attached: Resource[];
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
 
 export type Point = { x: number; y: number };
+
+/**
+ * Why one resource points at another, in the two parts a connector can state:
+ * the mechanism that joins the pair, and the exact value it is joined on.
+ *
+ * This used to be a band in the details rail, which meant the graph drew the
+ * arrow while a panel three hundred pixels away explained it. The reason
+ * belongs on the line: `env · DATABASE_URL` is the whole content of an edge,
+ * and a connector carrying it stops being a line between two boxes.
+ */
+export type EdgeLink = { via: string; detail: string | null };
+
+/**
+ * Ordered by how specific the answer is: a route's rule and a mount path name
+ * an exact place, while an environment reference names the variable that
+ * carries it. Every branch reads a field the API actually returned — an edge
+ * the spec does not explain carries no label rather than an invented one.
+ */
+export function edgeLink(from: Resource, to: string): EdgeLink | null {
+  const rule = from.rules.find((entry) => entry.backend === to);
+  if (rule !== undefined) return { via: 'http', detail: `${rule.path} → :${rule.port}` };
+
+  const mount = from.mounts.find((entry) => entry.target === to);
+  if (mount !== undefined) {
+    return {
+      via: 'mount',
+      detail: mount.file === null ? mount.path : `${mount.file} → ${mount.path}`,
+    };
+  }
+
+  if (from.diskRef === to) return { via: 'disk', detail: null };
+
+  // `${db.uri}` in a value: the variable's own name is what the user will
+  // recognise, since that is what their code reads.
+  const variable = from.env.find((entry) => entry.value.includes(`\${${to}.`));
+  if (variable !== undefined) return { via: 'env', detail: variable.name };
+
+  return null;
+}
 
 /**
  * Names, not URNs: `dependsOn` speaks in names and so does the layout.
@@ -21,15 +68,58 @@ export type Point = { x: number; y: number };
  * and target anchor last. Every consecutive pair shares an x or a y, so the
  * renderer never has to decide where a line bends.
  */
-export type GraphEdge = { from: string; to: string; points: Point[] };
+export type GraphEdge = { from: string; to: string; points: Point[]; link: EdgeLink | null };
 
 export type GraphLayout = { nodes: GraphNode[]; edges: GraphEdge[]; width: number; height: number };
 
 /** Mirrors `node-card.tsx`'s `w-[260px]`. */
 export const CARD_WIDTH = 260;
 const GAP_X = 32;
-const GAP_Y = 64;
+/*
+ * The row gap is the conduit's height. A thin line needed nothing of it; a
+ * throat that flares out of one card and pinches at the waist needs the room
+ * to do both, and at 64px the curve had no run to turn in and read as a
+ * bracket rather than as a channel.
+ */
+export const ROW_GAP = 96;
+const GAP_Y = ROW_GAP;
 export const CANVAS_PADDING = 48;
+
+/**
+ * The conduit: how wide it leaves a card, and how far it pinches between them.
+ *
+ * A connector is not a wire between two ports — nothing in a pod is wired at a
+ * point. It is the whole width over which one resource reaches another, so it
+ * leaves the card as a mouth and narrows to a waist, which is also what gives
+ * the packets inside it lanes to travel and the bar a place to sit across.
+ */
+export const CONDUIT_MOUTH = 60;
+const WAIST_RATIO = 0.72;
+/** How far a control point reaches along the run, as a fraction of its height. */
+const CONDUIT_PULL = 0.34;
+
+/**
+ * The channel itself, as one closed path: the right wall down, the left wall
+ * back up. It is a filled shape and never a stroked outline — what a resource
+ * reaches another over is a field, not a pipe, so the renderer fades it out at
+ * the sides rather than drawing an edge you could point at.
+ */
+export function conduitShape(from: Point, to: Point, mouth = CONDUIT_MOUTH): string {
+  const half = mouth / 2;
+  const waist = (mouth * WAIST_RATIO) / 2;
+  const middle = (from.y + to.y) / 2;
+  const pull = (to.y - from.y) * CONDUIT_PULL;
+
+  return [
+    `M ${from.x + half} ${from.y}`,
+    `C ${from.x + half} ${from.y + pull} ${from.x + waist} ${middle - pull} ${from.x + waist} ${middle}`,
+    `C ${from.x + waist} ${middle + pull} ${to.x + half} ${to.y - pull} ${to.x + half} ${to.y}`,
+    `L ${to.x - half} ${to.y}`,
+    `C ${to.x - half} ${to.y - pull} ${from.x - waist} ${middle + pull} ${from.x - waist} ${middle}`,
+    `C ${from.x - waist} ${middle - pull} ${from.x - half} ${from.y + pull} ${from.x - half} ${from.y}`,
+    'Z',
+  ].join(' ');
+}
 
 /**
  * How far a connector with no room to run downward stands off a card before it
@@ -59,10 +149,53 @@ const CHIP_ICON = 11; // the 11px lucide glyph
 const CHIP_ICON_GAP = 4; // `gap-1`
 /** JetBrains Mono advances 0.6em per character, and the chips are 11.5px. */
 const MONO_ADVANCE = 6.9;
-const FOOTER_HEIGHT = 45; // `border-t` plus `py-2` around a `sm` button (28px)
+
+/**
+ * An attached disk, as a strip across the foot of the card that mounts it.
+ * `h-[34px]` plus the hairline that separates it from the body above.
+ */
+const ATTACH_HEIGHT = 34;
+const ATTACH_BORDER = 1;
 
 /** What is left for chips once the card's border and padding are paid for. */
 const CONTENT_WIDTH = CARD_WIDTH - 2 * BORDER - 2 * BODY_PADDING_X;
+
+/**
+ * Which disks are drawn *on* a resource rather than beside it.
+ *
+ * A disk with exactly one referrer is not a peer of the thing that mounts it:
+ * it is that thing's storage, it cannot be reached without it, and drawing it
+ * as its own card spends a whole row of the canvas and a connector on a fact
+ * that belongs in the card's own footer.
+ *
+ * Exactly one, and never more. A disk two resources point at is shared
+ * storage — a network disk — and shared storage is precisely the case an
+ * attachment cannot draw: it would have to appear twice, and two copies of one
+ * resource is two resources. Those stay nodes with connectors, which is also
+ * why this reads the referrer count rather than the disk's own fields.
+ */
+export function attachedDisks(resources: Resource[]): Map<string, Resource[]> {
+  const attached = new Map<string, Resource[]>();
+
+  for (const disk of resources) {
+    if (disk.kind !== 'Disk') continue;
+
+    const hosts = resources.filter(
+      (entry) => entry.name !== disk.name && entry.dependsOn.includes(disk.name),
+    );
+    const host = hosts.length === 1 ? hosts[0] : undefined;
+    // A disk nothing points at has no card to sit on and stays a node of its
+    // own, which is also the only way an unreferenced disk stays visible.
+    if (host === undefined || host.kind === 'Disk') continue;
+
+    const list = attached.get(host.name) ?? [];
+    list.push(disk);
+    attached.set(host.name, list);
+  }
+
+  for (const list of attached.values()) list.sort(byName);
+  return attached;
+}
 
 /**
  * Which glyph a chip carries. A key rather than the component itself, so the
@@ -71,9 +204,6 @@ const CONTENT_WIDTH = CARD_WIDTH - 2 * BORDER - 2 * BODY_PADDING_X;
 export type ChipIcon = 'instance' | 'replicas' | 'hostname' | 'domain' | 'version' | 'size';
 
 export type Chip = { icon: ChipIcon; label: string };
-
-/** Only a database can carry a tunnel. */
-export const canTunnel = (resource: Resource): boolean => resource.engine !== null;
 
 /** A field the API answered with nothing is not a chip; it is simply absent. */
 const stated = (value: string | null): string | null => {
@@ -94,10 +224,6 @@ export function routeUrl(resource: Resource): string | null {
   const host = stated(resource.hostname) ?? resource.domains.map(stated).find((one) => one !== null);
   return host === null || host === undefined ? null : `https://${host}`;
 }
-
-/** Whether the card carries a footer row — one action, and the height for it. */
-export const hasFooter = (resource: Resource): boolean =>
-  canTunnel(resource) || routeUrl(resource) !== null;
 
 /**
  * The facts a resource states, drawn from populated fields only. There is
@@ -194,16 +320,17 @@ export function chipRows(chips: Chip[]): Chip[][] {
 
 /**
  * What one card measures. The single source of truth: the card sets this as
- * its own height and the layout stacks rows by it.
+ * its own height and the layout stacks rows by it — so `attached` is a
+ * parameter rather than something the card works out for itself, because a
+ * footer the layout did not count is a card that overlaps the row beneath it.
  */
-export function cardHeight(resource: Resource): number {
+export function cardHeight(resource: Resource, attached: Resource[] = []): number {
   let height = 2 * BORDER + 2 * BODY_PADDING_Y + HEADER_HEIGHT;
 
   const rows = chipRows(chipsFor(resource)).length;
   if (rows > 0) height += CHIPS_OFFSET + rows * CHIP_HEIGHT + (rows - 1) * CHIP_GAP;
-  if (hasFooter(resource)) height += FOOTER_HEIGHT;
 
-  return height;
+  return height + attached.length * (ATTACH_BORDER + ATTACH_HEIGHT);
 }
 
 /** Byte order, not locale: the layout must not reshuffle between machines. */
@@ -504,11 +631,24 @@ const routeChain = (wire: Wire): Point[] => {
 };
 
 export function layoutGraph(resources: Resource[]): GraphLayout {
+  /*
+   * An attached disk is not a node. It leaves the index before anything else
+   * runs, which is what takes its layer, its connector and its lane with it:
+   * every later pass reads the index, so absorbing the disk here means no
+   * other pass has to know that attachments exist.
+   */
+  const attached = attachedDisks(resources);
+  const absorbed = new Set<string>();
+  for (const disks of attached.values()) {
+    for (const disk of disks) absorbed.add(disk.name);
+  }
+
   // A name is the graph's identity, so a repeated name is one node. Keeping
   // the first occurrence is what makes the edge lookup total.
   const index = new Map<string, Resource>();
   for (const resource of resources) {
-    if (!index.has(resource.name)) index.set(resource.name, resource);
+    if (absorbed.has(resource.name) || index.has(resource.name)) continue;
+    index.set(resource.name, resource);
   }
   if (index.size === 0) return { nodes: [], edges: [], width: 0, height: 0 };
 
@@ -583,7 +723,7 @@ export function layoutGraph(resources: Resource[]): GraphLayout {
         order: column.length,
         rank: 0,
         width: CARD_WIDTH,
-        height: cardHeight(resource),
+        height: cardHeight(resource, attached.get(resource.name) ?? []),
         centre: 0,
         y: 0,
         up: [],
@@ -753,6 +893,7 @@ export function layoutGraph(resources: Resource[]): GraphLayout {
       if (resource === null) continue;
       nodes.push({
         resource,
+        attached: attached.get(resource.name) ?? [],
         x: slot.centre - slot.width / 2,
         y: slot.y,
         width: slot.width,
@@ -860,7 +1001,12 @@ export function layoutGraph(resources: Resource[]): GraphLayout {
   }
 
   const edges: GraphEdge[] = wires.map((wire) => {
-    if (wire.descends) return { from: wire.from, to: wire.to, points: routeChain(wire) };
+    /* The source resource is what explains the edge, because the reference is
+       its own field: a Route's rule, an App's mount, a database's disk. */
+    const declarer = index.get(wire.from);
+    const link = declarer === undefined ? null : edgeLink(declarer, wire.to);
+
+    if (wire.descends) return { from: wire.from, to: wire.to, points: routeChain(wire), link };
     const { source, target } = wire;
     const sourceBox = {
       x: source.centre - source.width / 2,
@@ -878,6 +1024,7 @@ export function layoutGraph(resources: Resource[]): GraphLayout {
       from: wire.from,
       to: wire.to,
       points: routeOrthogonal(sourceBox, targetBox, wire.startX, wire.endX),
+      link,
     };
   });
 

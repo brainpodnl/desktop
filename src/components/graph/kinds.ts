@@ -27,8 +27,13 @@ export type KindStyle = { icon: ComponentType<{ size: number }>; accent: string;
  * — which is what keeps one resource reading as one colour across the window.
  * It cannot be a utility for the same reason `accent` is not one: the value is
  * a runtime `var()` lookup.
+ *
+ * `percent` is the one thing a call site is allowed to vary, and only to build
+ * a ramp out of the same hue: the tile lights itself from 22 to 11 across its
+ * own height, and a chip stays at the flat default.
  */
-export const tint = (accent: string): string => `color-mix(in oklab, ${accent} 16%, transparent)`;
+export const tint = (accent: string, percent = 16): string =>
+  `color-mix(in oklab, ${accent} ${percent}%, transparent)`;
 
 export const KIND_STYLE: Record<ResourceKind, KindStyle> = {
   App: { icon: Box, accent: 'var(--color-kind-app)', label: 'App' },

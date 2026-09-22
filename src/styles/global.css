@@ -80,8 +80,31 @@
   --color-kind-disk: var(--kind-disk);
   --color-kind-config: var(--kind-config);
 
-  /* The globe's dot field. Authored light-only on the site. */
+  /*
+   * The graph's canvas. It is a *recessed* surface, one step below the window's
+   * chrome rather than the same paint as it: the pane's toolbar and the pod
+   * rail are where the window speaks, and the canvas is the well the resource
+   * cards sit in. Without the step down, `card` and `background` are within
+   * two points of each other in dark mode and a node reads as a rectangle
+   * outlined on nothing.
+   *
+   * `dots` is the lattice on it — authored light-only on the site, and the
+   * sign-in globe's dot field too — and `wire` is the connector between two
+   * cards. The connector was drawn in `border` and measured 1.3:1 on this
+   * ground: a line that states how the pod is wired is information, not a
+   * divider, so it is held at the 3:1 graphic floor instead.
+   */
+  --color-canvas: var(--canvas);
   --color-dots: var(--dots);
+  --color-wire: var(--wire);
+
+  /*
+   * The light a raised card catches along its top edge. It is a palette
+   * decision rather than a fixed alpha: on the dark well the card is the lit
+   * object and needs the highlight to read as material, and on the light one
+   * a white card standing on a warm ground has nothing brighter to catch.
+   */
+  --color-card-sheen: var(--card-sheen);
 
   /*
    * The hero tile: a chip the agent marks sit on. The site authors it as
@@ -255,7 +278,10 @@
   --kind-disk: #6d675f;
   --kind-config: #a8690c;
 
-  --dots: #cec6b4;
+  --canvas: #efece4;
+  --dots: #cdc5b3;
+  --wire: #7b7467;
+  --card-sheen: transparent;
 
   --tile-from: #ffffff;
   --tile-to: #f3f0ea;
@@ -320,7 +346,10 @@
   --kind-disk: #bdb6aa;
   --kind-config: #e7a94f;
 
-  --dots: #3b362c;
+  --canvas: #0d0b07;
+  --dots: #36312a;
+  --wire: #6e675a;
+  --card-sheen: rgba(251, 250, 248, 0.07);
 
   /*
    * `card` and `secondary` sit within two points of `background` here, so the
@@ -348,6 +377,15 @@
   body,
   #root {
     height: 100%;
+    /*
+     * A window is not a document and has no scroll position of its own. Every
+     * scroll in this app belongs to a region that owns one — the pods rail,
+     * the graph canvas, the details column — and any pixel that escapes one of
+     * them used to make the whole window scrollable, which drags the titlebar
+     * and the traffic-light band off the top and leaves the transparent
+     * surface behind it showing.
+     */
+    overflow: hidden;
   }
 
   body {
@@ -359,7 +397,7 @@
      */
     background: transparent;
     text-rendering: optimizeLegibility;
-    /* A window is not a document: it must not rubber-band or drag-select. */
+    /* Nor does it rubber-band or drag-select. */
     overscroll-behavior: none;
     user-select: none;
     cursor: default;

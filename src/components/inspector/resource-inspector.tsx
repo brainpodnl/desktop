@@ -1,19 +1,20 @@
 import { ExternalLink, X } from 'lucide-react';
-import { motion, useReducedMotion } from 'motion/react';
+import { motion } from 'motion/react';
 import { useCallback, useRef, type PointerEvent, type ReactElement } from 'react';
 
 import { Button } from '@/components/button';
 import { routeUrl } from '@/components/graph/layout';
-import { KIND_STYLE, tint } from '@/components/graph/kinds';
+import { KindTile } from '@/components/graph/kind-tile';
+import { KIND_STYLE } from '@/components/graph/kinds';
 import { Activity } from '@/components/inspector/activity';
 import { Configuration } from '@/components/inspector/configuration';
 import { Fact, Section, ScrollingValue } from '@/components/inspector/parts';
 import { readiness, TONE_FILL, TONE_TEXT } from '@/components/graph/readiness';
 import { Scaling } from '@/components/inspector/scaling';
 import { Variables } from '@/components/inspector/variables';
-import { Wiring } from '@/components/inspector/wiring';
 import type { Resource } from '@/lib/bridge';
 import { cx } from '@/lib/cx';
+import { useReducedMotion } from '@/lib/motion';
 import {
   clampInspectorWidth,
   MAX_INSPECTOR_WIDTH,
@@ -30,8 +31,10 @@ import {
  * screen, and the two read as one object — the node, opened.
  *
  * The bands run in the order the questions arrive: what state is it in, how is
- * it wired, how is it configured, what can other resources reference about it,
- * and what has it been doing. Nothing is behind a tab.
+ * it configured, what can other resources reference about it, and what has it
+ * been doing. How it is *wired* is not among them: the canvas states that on
+ * the connectors themselves, where the line and its reason are one object.
+ * Nothing is behind a tab.
  */
 
 /** What the keyboard's grab on the divider is worth per press. */
@@ -43,13 +46,11 @@ type Drag = { pointerId: number; startX: number; startWidth: number };
 export function ResourceInspector({
   pod,
   resource,
-  resources,
   width,
   overlay,
   busy,
   onWidth,
   onWidthCommit,
-  onSelect,
   onClose,
   onOpenTunnel,
   onOpenRoute,
@@ -60,8 +61,6 @@ export function ResourceInspector({
 }: {
   pod: string;
   resource: Resource;
-  /** Every resource at this revision, which is what the wiring resolves against. */
-  resources: Resource[];
   width: number;
   /** True where the pane is too narrow to give the rail a column of its own. */
   overlay: boolean;
@@ -70,7 +69,6 @@ export function ResourceInspector({
   onWidth: (width: number) => void;
   /** The gesture ended; this width is worth writing down. */
   onWidthCommit: (width: number) => void;
-  onSelect: (name: string) => void;
   onClose: () => void;
   onOpenTunnel: (resource: Resource) => void;
   onOpenRoute: (resource: Resource) => void;
@@ -89,9 +87,15 @@ export function ResourceInspector({
 }): ReactElement {
   const reduced = useReducedMotion() === true;
   const kind = KIND_STYLE[resource.kind];
-  const Glyph = kind.icon;
   const state = readiness(resource);
   const url = routeUrl(resource);
+
+  /*
+   * Which replicas the status block has anything left to say about. Derived
+   * here rather than inline, because the list's own emptiness is what decides
+   * whether it renders at all.
+   */
+  const unsettled = resource.replicaStates.filter((replica) => replica.phase !== 'Ready');
   const drag = useRef<Drag | null>(null);
 
   const startResize = useCallback(
@@ -190,18 +194,18 @@ export function ResourceInspector({
       />
 
       <header className="flex shrink-0 items-start gap-2.5 border-b border-border px-4 py-3.5">
-        <span
-          aria-hidden="true"
-          className="flex size-9 shrink-0 items-center justify-center rounded-lg"
-          style={{ backgroundColor: tint(kind.accent), color: kind.accent }}>
-          <Glyph size={16} />
-        </span>
+        <KindTile kind={resource.kind} />
 
         <span className="min-w-0 flex-1">
           <h2 className="truncate text-ui-title font-semibold" title={resource.name}>
             {resource.name}
           </h2>
-          <p className="truncate text-ui-sm text-muted-foreground">{kind.label}</p>
+          {/* The kind in its own colour, the same way the node states it, so
+              the panel reads as the card opened rather than as a second view
+              of it. */}
+          <p className="truncate text-ui-sm font-medium" style={{ color: kind.accent }}>
+            {kind.label}
+          </p>
         </span>
 
         <Button
@@ -278,12 +282,15 @@ export function ResourceInspector({
             ) : null}
           </div>
 
-          {/* Per-replica truth, which is the only place the API explains a
-              degraded workload: one of them carries the reason. */}
-          {resource.replicaStates.length > 0 && (
+          {/* The exceptions only. A Ready replica restates the headline above
+              it — same word, and the count is already in `state.detail` — so
+              a row per replica turns a healthy workload into a wall of ids
+              saying "Ready" twice. What is left is the replica that has not
+              settled, which is also the one the API attaches a reason to. */}
+          {unsettled.length > 0 && (
             <ul className="mt-1.5 flex flex-col gap-1">
-              {resource.replicaStates.map((replica) => {
-                const tone = replica.phase === 'Ready' ? 'ok' : replica.phase === 'Degraded' ? 'bad' : 'progress';
+              {unsettled.map((replica) => {
+                const tone = replica.phase === 'Degraded' ? 'bad' : 'progress';
 
                 return (
                   <li key={replica.name} className="flex items-baseline gap-2">
@@ -322,8 +329,6 @@ export function ResourceInspector({
           onGoToHead={onGoToHead}
           onSaved={onSaved}
         />
-
-        <Wiring resource={resource} resources={resources} onSelect={onSelect} />
 
         <Configuration resource={resource} />
 

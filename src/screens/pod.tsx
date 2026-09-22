@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { ExternalLink, TriangleAlert, X } from 'lucide-react';
-import { motion, useReducedMotion } from 'motion/react';
+import { motion } from 'motion/react';
 import {
   useCallback,
   useEffect,
@@ -14,7 +14,12 @@ import { AccountButton } from '@/components/account-button';
 import { Button } from '@/components/button';
 import { ConnectionsPanel } from '@/components/connections-panel';
 import { routeUrl } from '@/components/graph/layout';
-import { podReadiness, TONE_FILL, TONE_TEXT } from '@/components/graph/readiness';
+import {
+  podReadiness,
+  TONE_FILL,
+  TONE_TEXT,
+  type PodReadiness,
+} from '@/components/graph/readiness';
 import { ResourceGraph } from '@/components/graph/resource-graph';
 import { Select } from '@/components/inspector/parts';
 import { ResourceInspector } from '@/components/inspector/resource-inspector';
@@ -42,6 +47,7 @@ import {
   readInspectorWidth,
   writeInspectorWidth,
 } from '@/lib/inspector-width';
+import { useReducedMotion } from '@/lib/motion';
 import { isLocalPort, MAX_LOCAL_PORT, readLastPort, writeLastPort } from '@/lib/port-preference';
 import {
   errorMessage,
@@ -272,7 +278,14 @@ function PodRail({
   return (
     <aside
       aria-label="Pods and connections"
-      className="vibrant flex w-[248px] shrink-0 flex-col pt-[38px]">
+      /*
+       * The rail scrolls itself. Its lower bands — the skill installer, the
+       * connections, the update notice, the account — are fixed-height and
+       * together taller than a short window, and with nowhere to put that the
+       * overflow escaped into the document and made the whole window scroll.
+       * `overscroll-contain` keeps the gesture here once it does.
+       */
+      className="vibrant flex w-[248px] shrink-0 flex-col overflow-y-auto overscroll-contain pt-[38px]">
       {/* The window's own identity, under the drag region rather than in it:
           the traffic lights own the left of that 38px band, and a mark beside
           them would be a second thing competing for the same corner. */}
@@ -285,7 +298,10 @@ function PodRail({
           rhythm cannot drift between them. */}
       <RailHeading>Pods</RailHeading>
 
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      {/* The one band that gives way first, and the floor it stops at: a list
+          squeezed to nothing is a sidebar with no pods in it, so past two rows
+          the rail scrolls instead. */}
+      <div className="min-h-[4.5rem] flex-1 overflow-y-auto">
         {loading ? (
           SKELETON_ROWS.map((row) => (
             <motion.div
@@ -462,6 +478,7 @@ function RevisionPicker({
     <Select
       label="Revision"
       mono
+      tone="toolbar"
       value={known ? value : ''}
       options={known ? options : [{ value: '', label: 'new draft', disabled: true }, ...options]}
       onChange={onChange}
@@ -833,124 +850,22 @@ function PodPane({
 
   return (
     <div className="flex min-w-0 flex-1 flex-col border-l border-border bg-background pt-[38px]">
-      <motion.header
-        key={pod.name}
-        initial={reduced ? false : { opacity: 0, y: -6 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ type: 'spring', stiffness: 320, damping: 34 }}
-        /* `items-center`, not `items-start`: the controls are one row tall and
-           the identity beside them is two, so aligning to the top hangs them
-           off the title's line instead of the block as a whole. */
-        className="@container flex shrink-0 items-center justify-between gap-4 border-b border-border px-6 py-4">
-        {/* Name over state, which is the lockup every other object in this
-            window uses — a node card, the inspector's header, a sidebar row.
-            The pod is the one that was stating its identity twice instead: the
-            display name and the slug are the same fact at two fidelities, and
-            the question a glance at this window asks is not what the pod is
-            called. */}
-        <div className="group min-w-0">
-          <h1 className="truncate text-ui-title font-semibold">{pod.displayName ?? pod.name}</h1>
-
-          <div className="mt-0.5 flex min-w-0 items-center gap-1.5">
-            {/* The name the CLI and the API address this pod by, so it is a
-                value to take away rather than only to read. The control rides
-                the lockup on hover, the way every other copyable value in this
-                window does, and its negative margin keeps a 24px button from
-                setting the height of a 16px line.
-
-                The whole group shrinks six times as fast as the status beside
-                it, and leaves entirely under a 640px pane: at the window's
-                760px minimum there is no room for both, and the one to give up
-                is the one that is nearly the title again. A degraded pod reads
-                its whole verdict; it never reads a whole slug and half a
-                reason. */}
-            <span className="flex min-w-0 shrink-[6] items-center gap-1.5 @max-[640px]:hidden">
-              <span
-                data-selectable
-                title={pod.name}
-                className="min-w-0 truncate font-mono text-ui-mono text-faint">
-                {pod.name}
-              </span>
-              <span className="-my-1 shrink-0 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 has-[:focus-visible]:opacity-100">
-                <CopyButton label="pod name" value={pod.name} />
-              </span>
-
-              {health !== null && (
-                <span aria-hidden="true" className="h-3 w-px shrink-0 bg-border" />
-              )}
-            </span>
-
-            {health !== null && (
-              <>
-                {/* The dot is decoration here: unlike a card, this line already
-                    says in words what the dot is tinted for. */}
-                <span
-                  aria-hidden="true"
-                  className={cx('size-1.5 shrink-0 rounded-full', TONE_FILL[health.tone])}
-                />
-                <span
-                  title={health.label}
-                  className={cx(
-                    'truncate text-ui-sm',
-                    /* Healthy is the quiet default at this size — it is the
-                       state the window is in nearly all the time, and ink
-                       spent on it is ink the title loses. Only a resource in
-                       trouble earns the foreground. */
-                    health.tone === 'ok' ? 'text-muted-foreground' : TONE_TEXT[health.tone],
-                  )}>
-                  {health.label}
-                </span>
-              </>
-            )}
-          </div>
-        </div>
-
-        {/* All three read the pod, so they sit together at the head's right:
-            the revision the graph is drawn at, the one control that changes
-            what is running, and the way out to the console. */}
-        <div className="flex shrink-0 items-center gap-2">
-          <RevisionPicker
-            revisions={revisions.data ?? []}
-            value={revision}
-            fallback={podMeta(pod)}
-            onChange={(id) => setChosen({ pod: pod.name, id })}
-          />
-
-          {/* The pod's newest revision, when it is not the one on screen and
-              is not running. Without it the pane is silent about the single
-              fact this product is organised around — that a draft exists and
-              nothing in it is live — because the deploy control is mounted
-              only over the head, and the head is exactly what this state is
-              not showing. */}
-          {head !== null && !atHead && <DraftNotice head={head} onShow={showHead} />}
-
-          {/* Beside the revision it acts on, because that is its scope: the
-              API deploys the pod's head and refuses anything else, so it is
-              offered only while the graph on screen is that head. It is absent
-              entirely while the head is already running, which is most of the
-              time, and while the picker is reading history. */}
-          {watchingHead && (
-            <DeployControl
-              pod={pod.name}
-              head={head}
-              changes={draftDiff.data ?? []}
-              onFailed={setActionError}
-            />
-          )}
-
-          {status !== null && (
-            <Button
-              variant="outline"
-              size="sm"
-              icon={<ExternalLink />}
-              title={consoleUrl(status.consoleEndpoint, pod.name)}
-              aria-label={`Open ${pod.name} in the Brainpod console`}
-              onClick={() => follow(consoleUrl(status.consoleEndpoint, pod.name))}>
-              Console
-            </Button>
-          )}
-        </div>
-      </motion.header>
+      <PodHeader
+        pod={pod}
+        health={health}
+        revisions={revisions.data ?? []}
+        revision={revision}
+        head={head}
+        atHead={atHead}
+        watchingHead={watchingHead}
+        changes={draftDiff.data ?? []}
+        consoleEndpoint={status?.consoleEndpoint ?? null}
+        reduced={reduced}
+        onRevision={(id) => setChosen({ pod: pod.name, id })}
+        onShowHead={showHead}
+        onFailed={setActionError}
+        onFollow={follow}
+      />
 
       {/* While the port step is open it carries the tunnel's failure itself,
           right beside the field that fixes it; here would be a second copy. */}
@@ -988,9 +903,6 @@ function PodPane({
             resources={list}
             selected={selected}
             onSelect={onSelect}
-            busy={busy}
-            onOpenTunnel={ask}
-            onOpenRoute={visit}
             /* Only what is actually covering the canvas: in a column the rail
                takes its own width out of the row and covers nothing. */
             occluded={inspected !== null && overlay ? rail : 0}
@@ -1000,13 +912,11 @@ function PodPane({
             <ResourceInspector
               pod={pod.name}
               resource={inspected}
-              resources={list}
               width={rail}
               overlay={overlay}
               busy={busy[inspected.name] === true}
               onWidth={setRail}
               onWidthCommit={writeInspectorWidth}
-              onSelect={onSelect}
               onClose={() => onSelect(null)}
               onOpenTunnel={ask}
               onOpenRoute={visit}
@@ -1033,6 +943,183 @@ function PodPane({
         />
       )}
     </div>
+  );
+}
+
+/**
+ * The pane's toolbar: what pod is on screen, what state it is in, and the
+ * three controls that read or change it.
+ *
+ * It is a component rather than a block inside the pane because it is the one
+ * surface in this window that mixes two vocabularies — an identity lockup and
+ * a row of chrome — and they have to be tuned against each other. The
+ * controls are one language now: a native picker and a button on the same
+ * raised surface, with the draft chip riding the picker it belongs to and a
+ * hairline before the two controls that act rather than read. A bright input
+ * rule beside a quiet outline button is what made three controls read as
+ * three unrelated widgets that had landed in the same corner.
+ */
+function PodHeader({
+  pod,
+  health,
+  revisions,
+  revision,
+  head,
+  atHead,
+  watchingHead,
+  changes,
+  consoleEndpoint,
+  reduced,
+  onRevision,
+  onShowHead,
+  onFailed,
+  onFollow,
+}: {
+  pod: Pod;
+  /** The graph's verdict, or null until the resources have actually been read. */
+  health: PodReadiness | null;
+  revisions: Revision[];
+  /** The revision the graph is drawn at. */
+  revision: string | null;
+  /** The pod's newest revision, which is the only one a deploy can act on. */
+  head: Revision | null;
+  atHead: boolean;
+  watchingHead: boolean;
+  /** Everything the draft changes, which is what a deploy would promote. */
+  changes: DiffEntry[];
+  /** Absent until the shared config has been read; the link waits rather than guesses. */
+  consoleEndpoint: string | null;
+  reduced: boolean;
+  onRevision: (id: string) => void;
+  onShowHead: () => void;
+  onFailed: (message: string | null) => void;
+  onFollow: (url: string) => void;
+}): ReactElement {
+  /* Only when something stands on the other side of it. A rule at the end of
+     a row is a line, not a separator. */
+  const acts = watchingHead || consoleEndpoint !== null;
+
+  return (
+    <motion.header
+      key={pod.name}
+      initial={reduced ? false : { opacity: 0, y: -6 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ type: 'spring', stiffness: 320, damping: 34 }}
+      /* `items-center`, not `items-start`: the controls are one row tall and
+         the identity beside them is two, so aligning to the top hangs them
+         off the title's line instead of the block as a whole. */
+      className="@container flex shrink-0 items-center justify-between gap-4 border-b border-border px-6 py-4">
+      {/* Name over state, which is the lockup every other object in this
+          window uses — a node card, the inspector's header, a sidebar row.
+          The pod is the one that was stating its identity twice instead: the
+          display name and the slug are the same fact at two fidelities, and
+          the question a glance at this window asks is not what the pod is
+          called. */}
+      <div className="group min-w-0">
+        <h1 className="truncate text-ui-title font-semibold">{pod.displayName ?? pod.name}</h1>
+
+        <div className="mt-0.5 flex min-w-0 items-center gap-1.5">
+          {/* The name the CLI and the API address this pod by, so it is a
+              value to take away rather than only to read. The control rides
+              the lockup on hover, the way every other copyable value in this
+              window does, and its negative margin keeps a 24px button from
+              setting the height of a 16px line.
+
+              The whole group shrinks six times as fast as the status beside
+              it, and leaves entirely under a 640px pane: at the window's
+              760px minimum there is no room for both, and the one to give up
+              is the one that is nearly the title again. A degraded pod reads
+              its whole verdict; it never reads a whole slug and half a
+              reason. */}
+          <span className="flex min-w-0 shrink-[6] items-center gap-1.5 @max-[640px]:hidden">
+            <span
+              data-selectable
+              title={pod.name}
+              className="min-w-0 truncate font-mono text-ui-mono text-faint">
+              {pod.name}
+            </span>
+            <span className="-my-1 shrink-0 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 has-[:focus-visible]:opacity-100">
+              <CopyButton label="pod name" value={pod.name} />
+            </span>
+
+            {health !== null && <span aria-hidden="true" className="h-3 w-px shrink-0 bg-border" />}
+          </span>
+
+          {health !== null && (
+            <>
+              {/* The dot is decoration here: unlike a card, this line already
+                  says in words what the dot is tinted for. */}
+              <span
+                aria-hidden="true"
+                className={cx('size-1.5 shrink-0 rounded-full', TONE_FILL[health.tone])}
+              />
+              <span
+                title={health.label}
+                className={cx(
+                  'truncate text-ui-sm',
+                  /* Healthy is the quiet default at this size — it is the
+                     state the window is in nearly all the time, and ink
+                     spent on it is ink the title loses. Only a resource in
+                     trouble earns the foreground. */
+                  health.tone === 'ok' ? 'text-muted-foreground' : TONE_TEXT[health.tone],
+                )}>
+                {health.label}
+              </span>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* All of these read the pod, so they sit together at the head's right:
+          the revision the graph is drawn at, the one control that changes what
+          is running, and the way out to the console. */}
+      <div className="flex shrink-0 items-center gap-2">
+        {/* One group, because they are one subject: which revision is on
+            screen, and where the work actually is. */}
+        <div className="flex shrink-0 items-center gap-1">
+          <RevisionPicker
+            revisions={revisions}
+            value={revision}
+            fallback={podMeta(pod)}
+            onChange={onRevision}
+          />
+
+          {/* The pod's newest revision, when it is not the one on screen and
+              is not running. Without it the pane is silent about the single
+              fact this product is organised around — that a draft exists and
+              nothing in it is live — because the deploy control is mounted
+              only over the head, and the head is exactly what this state is
+              not showing. */}
+          {head !== null && !atHead && <DraftNotice head={head} onShow={onShowHead} />}
+        </div>
+
+        {acts && <span aria-hidden="true" className="h-4 w-px shrink-0 bg-border" />}
+
+        {/* Beside the revision it acts on, because that is its scope: the
+            API deploys the pod's head and refuses anything else, so it is
+            offered only while the graph on screen is that head. It is absent
+            entirely while the head is already running, which is most of the
+            time, and while the picker is reading history. */}
+        {watchingHead && (
+          <DeployControl pod={pod.name} head={head} changes={changes} onFailed={onFailed} />
+        )}
+
+        {consoleEndpoint !== null && (
+          <Button
+            /* `secondary`, not `outline`: on the toolbar's own surface an
+               outline button is a rule around nothing, and this sits beside a
+               raised picker. */
+            variant="secondary"
+            size="sm"
+            icon={<ExternalLink />}
+            title={consoleUrl(consoleEndpoint, pod.name)}
+            aria-label={`Open ${pod.name} in the Brainpod console`}
+            onClick={() => onFollow(consoleUrl(consoleEndpoint, pod.name))}>
+            Console
+          </Button>
+        )}
+      </div>
+    </motion.header>
   );
 }
 

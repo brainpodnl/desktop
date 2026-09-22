@@ -31,6 +31,19 @@ export const TONE_FILL: Record<Tone, string> = {
   idle: 'bg-faint',
 };
 
+/**
+ * The aura behind the dot, for the one surface that has to be read across a
+ * canvas rather than at arm's length. It is the same colour as the fill at a
+ * tenth, which is light around a dot rather than a second ring to decode; a
+ * caller that renders the dot inside a line of text does not use it.
+ */
+export const TONE_RING: Record<Tone, string> = {
+  ok: 'ring-ok/12',
+  progress: 'ring-warn/15',
+  bad: 'ring-destructive/15',
+  idle: 'ring-faint/12',
+};
+
 /** The same tones as text. `warn` is a dot fill, so words use its legible twin. */
 export const TONE_TEXT: Record<Tone, string> = {
   ok: 'text-foreground',
@@ -58,9 +71,8 @@ export function readiness(resource: Resource): Readiness {
     /*
      * Replica counts belong to workloads, and only to those that have more
      * than one: "1 of 1 replicas ready" beside the word Ready says nothing the
-     * word did not, and the replica's own row below states its name anyway.
-     * A disk reports a phase too, and its second fact is whether the volume is
-     * bound rather than how many of it are running.
+     * word did not. A disk reports a phase too, and its second fact is whether
+     * the volume is bound rather than how many of it are running.
      */
     const ready = resource.replicaStates.filter((replica) => replica.phase === 'Ready').length;
     const detail =

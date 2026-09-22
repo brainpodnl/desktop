@@ -59,6 +59,7 @@ export function Select({
   value,
   options,
   size = 'sm',
+  tone = 'field',
   mono = false,
   disabled = false,
   onChange,
@@ -69,11 +70,21 @@ export function Select({
   /** A disabled option labels a state the control is in without being a place to go. */
   options: { value: string; label: string; disabled?: boolean }[];
   size?: 'xs' | 'sm';
+  /**
+   * Which surface the control is standing on. A `field` wears the input
+   * boundary, because in a fact row it is the only thing saying a value can be
+   * edited. A `toolbar` control has no row to distinguish itself from and
+   * every neighbour is a button, so it takes the button's own surface — the
+   * bright input rule beside a quiet outline button is two control languages
+   * in one 28px row.
+   */
+  tone?: 'field' | 'toolbar';
   mono?: boolean;
   disabled?: boolean;
   onChange: (value: string) => void;
 }): ReactElement {
   const compact = size === 'xs';
+  const toolbar = tone === 'toolbar';
 
   return (
     /* `w-fit`, not `w-full`: dropped into a fact row the value cell would
@@ -87,9 +98,14 @@ export function Select({
         disabled={disabled}
         onChange={(event) => onChange(event.target.value)}
         className={cx(
-          'w-full appearance-none rounded-lg border border-input bg-background py-0 outline-none transition-colors',
-          'hover:border-foreground/25 focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40',
+          'w-full appearance-none border py-0 outline-none transition-colors',
+          'focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40',
           'disabled:pointer-events-none disabled:opacity-50',
+          /* The button ladder's radius, so a picker and a button standing in
+             the same row are cut from the same corner. */
+          toolbar
+            ? 'rounded-[min(var(--radius-md),12px)] border-border bg-secondary hover:bg-[color-mix(in_oklch,var(--secondary),var(--foreground)_5%)]'
+            : 'rounded-lg border-input bg-background hover:border-foreground/25',
           mono ? 'font-mono text-ui-mono' : 'text-ui',
           compact ? 'h-6 pr-6 pl-2' : 'h-7 pr-7 pl-2.5',
         )}>
@@ -104,7 +120,8 @@ export function Select({
         size={compact ? 11 : 13}
         aria-hidden="true"
         className={cx(
-          'pointer-events-none absolute top-1/2 -translate-y-1/2 text-faint',
+          'pointer-events-none absolute top-1/2 -translate-y-1/2',
+          toolbar ? 'text-muted-foreground' : 'text-faint',
           compact ? 'right-1.5' : 'right-2',
         )}
       />
