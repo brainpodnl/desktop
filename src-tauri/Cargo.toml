@@ -69,6 +69,6 @@ window-vibrancy = "0.8"
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 
 [build-dependencies]
-protox = "0.7.1"
+protox = "0.9.1"
 tauri-build = { version = "2", features = [] }
 tonic-build = "0.12.3"
