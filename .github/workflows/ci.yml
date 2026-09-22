@@ -116,6 +116,9 @@ jobs:
     name: Bundle ${{ matrix.label }}
     needs: [web, rust]
     runs-on: ${{ matrix.platform }}
+    # A bundle job that has not finished in this long is stuck, not slow: the
+    # whole matrix runs in about ten minutes.
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       # Host architectures only. The cross builds (Intel macOS, arm64 Linux)

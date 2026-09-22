@@ -70,6 +70,10 @@ jobs:
     name: Bundle ${{ matrix.label }}
     needs: verify
     runs-on: ${{ matrix.platform }}
+    # Notarization waits on Apple, and `codesign` against a keychain it cannot
+    # open waits on a prompt nobody will answer. Either way the default six
+    # hours is runner time spent learning nothing.
+    timeout-minutes: 75
     permissions:
       contents: write
     strategy:
