@@ -2,7 +2,6 @@ import { getVersion } from '@tauri-apps/api/app';
 import { LogicalSize } from '@tauri-apps/api/dpi';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { CircleUserRound, Download, SquareTerminal, SunMoon } from 'lucide-react';
-import { useReducedMotion } from 'motion/react';
 import { useEffect, useLayoutEffect, useRef, useState, type ReactElement, type ReactNode } from 'react';
 
 import { Button } from '@/components/button';
@@ -14,6 +13,7 @@ import { Titlebar } from '@/components/titlebar';
 import { AuthProvider, useAuth } from '@/lib/auth';
 import { listPods, type Pod } from '@/lib/bridge';
 import { errorMessage } from '@/lib/queries';
+import { useMotion, useReducedMotion } from '@/lib/motion';
 import { useTheme } from '@/lib/theme';
 import { checkNow, useUpdate, type UpdateState } from '@/lib/updates';
 
@@ -238,17 +238,46 @@ function useWindowFit(body: React.RefObject<HTMLDivElement | null>, reduced: boo
 
 function AppearanceSection(): ReactElement {
   const { preference } = useTheme();
+  const motion = useMotion();
 
   return (
-    <Row
-      title="Theme"
-      description={
-        preference === 'system'
-          ? 'Brainpod follows your Mac’s appearance.'
-          : `Brainpod stays ${preference}, whatever your Mac is set to.`
-      }>
-      <ThemePicker />
-    </Row>
+    <>
+      <Row
+        title="Theme"
+        description={
+          preference === 'system'
+            ? 'Brainpod follows your Mac’s appearance.'
+            : `Brainpod stays ${preference}, whatever your Mac is set to.`
+        }>
+        <ThemePicker />
+      </Row>
+
+      {/* Beside the theme rather than in a section of its own: both are what
+          this window looks like while it sits open, and a section holding one
+          row is a heading with nothing under it.
+
+          `system` is not the same as `reduced` here, which is why this is a
+          preference and not a mirror of the Mac's: Reduce Motion is a
+          machine-wide switch, and wanting a still window is not the same as
+          wanting a still Mac. */}
+      <Row
+        title="Motion"
+        description={
+          motion.reduced
+            ? 'Animations are held still. The graph shows a connection’s packets where they stand, without moving them.'
+            : 'Brainpod follows your Mac’s Reduce Motion setting.'
+        }>
+        <Select
+          label="Motion"
+          value={motion.preference}
+          options={[
+            { value: 'system', label: 'Follow my Mac' },
+            { value: 'reduced', label: 'Reduced' },
+          ]}
+          onChange={(value) => motion.setPreference(value === 'reduced' ? 'reduced' : 'system')}
+        />
+      </Row>
+    </>
   );
 }
 

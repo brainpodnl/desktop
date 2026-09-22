@@ -1,5 +1,5 @@
 import { Check, Copy, Dices, Eye, EyeOff, TriangleAlert, X } from 'lucide-react';
-import { motion, useReducedMotion } from 'motion/react';
+import { motion } from 'motion/react';
 import {
   useCallback,
   useEffect,
@@ -14,6 +14,7 @@ import { Button } from '@/components/button';
 import { Spinner } from '@/components/spinner';
 import { portAvailable, randomPort, type Resource, type Tunnel } from '@/lib/bridge';
 import { cx } from '@/lib/cx';
+import { useReducedMotion } from '@/lib/motion';
 import { isLocalPort, MAX_LOCAL_PORT, MIN_LOCAL_PORT } from '@/lib/port-preference';
 
 const DIGITS = /^\d+$/;

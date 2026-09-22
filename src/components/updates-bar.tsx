@@ -1,11 +1,12 @@
 import { useQuery } from '@tanstack/react-query';
-import { motion, useReducedMotion } from 'motion/react';
+import { motion } from 'motion/react';
 import { useCallback, useState, type ReactElement, type ReactNode } from 'react';
 
 import { Button } from '@/components/button';
 import { RailHeading } from '@/components/rail-heading';
 import { installSkill } from '@/lib/bridge';
 import { useCli } from '@/lib/cli';
+import { useReducedMotion } from '@/lib/motion';
 import { errorMessage, harnessesQuery, latestSkillQuery, queryClient } from '@/lib/queries';
 import { staleHarnesses } from '@/lib/skills';
 import { useUpdate } from '@/lib/updates';

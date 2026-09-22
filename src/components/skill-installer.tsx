@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { ArrowUpRight, Check, TriangleAlert, X } from 'lucide-react';
-import { motion, useReducedMotion, type Transition } from 'motion/react';
+import { motion, type Transition } from 'motion/react';
 import {
   useCallback,
   useEffect,
@@ -23,6 +23,7 @@ import {
   type HarnessId,
 } from '@/lib/bridge';
 import { cx } from '@/lib/cx';
+import { useReducedMotion } from '@/lib/motion';
 import { errorMessage, harnessesQuery, latestSkillQuery, queryClient } from '@/lib/queries';
 import { outdated } from '@/lib/skills';
 

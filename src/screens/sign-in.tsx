@@ -1,5 +1,5 @@
 import { Check, Copy } from 'lucide-react';
-import { motion, useReducedMotion } from 'motion/react';
+import { motion } from 'motion/react';
 import { useCallback, useEffect, useState, type ReactElement } from 'react';
 
 import { Backdrop } from '@/components/backdrop';
@@ -7,6 +7,7 @@ import { Button } from '@/components/button';
 import { Headline } from '@/components/headline';
 import { BrainpodMark } from '@/components/marks/brainpod';
 import { useAuth } from '@/lib/auth';
+import { useReducedMotion } from '@/lib/motion';
 
 export function SignInScreen(): ReactElement {
   const { signIn, cancelSignIn, isSigningIn, error, fallbackUrl } = useAuth();

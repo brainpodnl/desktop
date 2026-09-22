@@ -7,7 +7,7 @@ import {
   type ReactElement,
   type ReactNode,
 } from 'react';
-import { AnimatePresence, motion, useReducedMotion, type Transition } from 'motion/react';
+import { AnimatePresence, motion, type Transition } from 'motion/react';
 
 import {
   MARKS,
@@ -15,6 +15,7 @@ import {
   type DestinationId,
 } from '@/components/marks/agents';
 import { BrainpodMark, BRAINPOD_RATIO } from '@/components/marks/brainpod';
+import { useReducedMotion } from '@/lib/motion';
 
 /**
  * The "Build it in Claude. Host it on Brainpod." hero from the marketing site
