@@ -33,13 +33,20 @@ into the existing `latest.json` rather than creating a second one.
 
 ## Artifacts per release
 
-| Platform       | Installer                        | Updater artifact  |
-| -------------- | -------------------------------- | ----------------- |
-| macOS arm64    | `.dmg`                           | `.app.tar.gz`     |
-| macOS x86_64   | `.dmg`                           | `.app.tar.gz`     |
-| Linux x86_64   | `.AppImage`, `.deb`, `.rpm`      | `.AppImage.tar.gz`|
-| Linux arm64    | `.AppImage`, `.deb`, `.rpm`      | `.AppImage.tar.gz`|
-| Windows x86_64 | `-setup.exe` (NSIS), `.msi` (WiX)| the installers    |
+| Platform       | Installer                         | Updater artifact                |
+| -------------- | --------------------------------- | ------------------------------- |
+| macOS arm64    | `.dmg`                            | `.app.tar.gz`                   |
+| macOS x86_64   | `.dmg`                            | `.app.tar.gz`                   |
+| Linux x86_64   | `.AppImage`, `.deb`, `.rpm`       | the `.AppImage`                 |
+| Linux arm64    | `.AppImage`, `.deb`, `.rpm`       | the `.AppImage`                 |
+| Windows x86_64 | `-setup.exe` (NSIS), `.msi` (WiX) | the installers                  |
+
+Every updater artifact is uploaded next to a detached `.sig`, and `latest.json`
+carries the same signature inline. Tauri v2 hands the updater the payload
+itself rather than a tarball of it, so on Linux and Windows the installer and
+the update are one file. The manifest also lists per-bundle keys
+(`linux-x86_64-deb`, `windows-x86_64-nsis`, …) beside the default one per
+platform, which is what lets a `.deb` install update from a `.deb`.
 
 The Linux arm64 job runs on a native `ubuntu-24.04-arm` runner because AppImage
 tooling has no cross-architecture mode. Those runners are free for public
@@ -48,6 +55,29 @@ paid larger runner or it has to be dropped.
 
 Linux bundles are built on Ubuntu 24.04, so `.deb`/`.rpm`/`.AppImage` require
 glibc 2.39 or newer. That is Ubuntu 24.04, Debian 13, Fedora 40 and up.
+
+### Version-less copies
+
+`releases/latest/download/<name>` resolves the newest release but not the asset
+inside it, and every bundler stamps the version into its filename, so a README
+link built from one would break at the next tag. After the bundle step each job
+runs `.github/scripts/stable-aliases.mjs`, which uploads a second copy of that
+platform's installers under a name that never moves:
+
+```
+Brainpod-arm64-macos.dmg        Brainpod-amd64-macos.dmg
+Brainpod-amd64-linux.AppImage   Brainpod-arm64-linux.AppImage
+Brainpod-amd64-linux.deb        Brainpod-arm64-linux.deb
+Brainpod-amd64-linux.rpm        Brainpod-arm64-linux.rpm
+Brainpod-amd64-windows-setup.exe
+Brainpod-amd64-windows.msi
+```
+
+They are plain copies, uploaded with `--clobber` so a re-run replaces its own
+earlier attempt. Updater payloads deliberately keep their stamped names —
+`latest.json` names them outright, and a signature belongs to one build. The
+cost is storing each installer twice; the benefit is that the README's download
+table never has to be edited again.
 
 ## Organization settings
 

@@ -10,16 +10,19 @@ events a resource is emitting right now, and database tunnels bound to real port
 
 ## Install
 
-Download the build for your platform from the
-[latest release](https://github.com/brainpodnl/desktop/releases/latest):
+Every row links the newest build, whatever version that is — each release uploads a version-less
+copy of its installers beside the stamped ones, so these links never go stale:
 
-| Platform       | Download                          |
-| -------------- | --------------------------------- |
-| macOS arm64    | `.dmg` (`aarch64`)                |
-| macOS x86_64   | `.dmg` (`x64`)                    |
-| Linux x86_64   | `.AppImage`, `.deb`, `.rpm`       |
-| Linux arm64    | `.AppImage`, `.deb`, `.rpm`       |
-| Windows x86_64 | `-setup.exe` (NSIS), `.msi` (WiX) |
+| Platform       | Download                                                                                                                                                                                                                                                            |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| macOS arm64    | [`.dmg`](https://github.com/brainpodnl/desktop/releases/latest/download/Brainpod-arm64-macos.dmg)                                                                                                                                                                     |
+| macOS x86_64   | [`.dmg`](https://github.com/brainpodnl/desktop/releases/latest/download/Brainpod-amd64-macos.dmg)                                                                                                                                                                     |
+| Linux x86_64   | [`.AppImage`](https://github.com/brainpodnl/desktop/releases/latest/download/Brainpod-amd64-linux.AppImage) · [`.deb`](https://github.com/brainpodnl/desktop/releases/latest/download/Brainpod-amd64-linux.deb) · [`.rpm`](https://github.com/brainpodnl/desktop/releases/latest/download/Brainpod-amd64-linux.rpm) |
+| Linux arm64    | [`.AppImage`](https://github.com/brainpodnl/desktop/releases/latest/download/Brainpod-arm64-linux.AppImage) · [`.deb`](https://github.com/brainpodnl/desktop/releases/latest/download/Brainpod-arm64-linux.deb) · [`.rpm`](https://github.com/brainpodnl/desktop/releases/latest/download/Brainpod-arm64-linux.rpm) |
+| Windows x86_64 | [`-setup.exe`](https://github.com/brainpodnl/desktop/releases/latest/download/Brainpod-amd64-windows-setup.exe) (NSIS) · [`.msi`](https://github.com/brainpodnl/desktop/releases/latest/download/Brainpod-amd64-windows.msi) (WiX)                                     |
+
+The [release page](https://github.com/brainpodnl/desktop/releases/latest) carries the same
+builds under their version-stamped names.
 
 macOS requires 11.0 or newer. The macOS builds are not notarized yet, so Gatekeeper refuses the
 first launch; clear the quarantine attribute after dragging the app into `/Applications`:

@@ -79,21 +79,31 @@ jobs:
           - label: macOS (arm64)
             platform: macos-latest
             args: --target aarch64-apple-darwin
+            target: aarch64-apple-darwin
+            slug: arm64-macos
           - label: macOS (x86_64)
             platform: macos-latest
             args: --target x86_64-apple-darwin
+            target: x86_64-apple-darwin
+            slug: amd64-macos
           - label: Linux (x86_64)
             platform: ubuntu-24.04
             args: ''
+            target: ''
+            slug: amd64-linux
           # Native arm64 runners exist for public repositories. Building here
           # rather than cross-compiling is what keeps the arm64 AppImage
           # possible at all: its tooling has no cross-architecture mode.
           - label: Linux (arm64)
             platform: ubuntu-24.04-arm
             args: ''
+            target: ''
+            slug: arm64-linux
           - label: Windows (x86_64)
             platform: windows-latest
             args: ''
+            target: ''
+            slug: amd64-windows
 
     steps:
       - uses: actions/checkout@v7
@@ -189,3 +199,15 @@ jobs:
           # and a flaky upload should not cost the whole platform.
           retryAttempts: 2
           args: ${{ matrix.args }}
+
+      # The README links downloads that must outlive the tag they were built
+      # for, so each installer is uploaded a second time under a version-less
+      # name. `releases/latest/download/Brainpod-arm64-macos.dmg` then always
+      # resolves, at the cost of storing the installers twice per release.
+      - name: Upload version-less copies for the README links
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          node .github/scripts/stable-aliases.mjs \
+            '${{ github.ref_name }}' '${{ matrix.slug }}' '${{ matrix.target }}'
