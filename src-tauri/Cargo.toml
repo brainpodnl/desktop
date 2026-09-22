@@ -57,7 +57,7 @@ tokio = { version = "1.52.3", features = [
     "time",
 ] }
 tokio-stream = "0.1.17"
-toml = "0.9.5"
+toml = "1.1.6"
 tonic = { version = "0.12.3", features = ["tls", "tls-webpki-roots"] }
 uuid = { version = "1.16.0", features = ["v4"] }
 
