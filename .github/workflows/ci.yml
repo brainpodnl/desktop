@@ -169,12 +169,40 @@ jobs:
       # from forks cannot read, so `tauri.ci.conf.json` turns them off. The
       # installers themselves are the part worth proving here and they still
       # build; they are simply unsigned.
-      - uses: tauri-apps/tauri-action@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      #
+      # `bundle_dmg.sh` fails on hosted macOS runners often enough to redden a
+      # pull request with nothing wrong in it. The binary is linked by the time
+      # bundling starts, so a second attempt costs seconds rather than a build
+      # — which is why this runs the CLI directly: tauri-action retries its
+      # uploads but never the bundling.
+      - name: Bundle the installers
+        shell: bash
+        run: |
+          set -uo pipefail
+          for attempt in 1 2; do
+            if pnpm tauri build --config src-tauri/tauri.ci.conf.json; then
+              exit 0
+            fi
+            echo "::warning::bundling failed on attempt ${attempt}"
+            # A half-written image is what the next `hdiutil create` would trip
+            # over, and the app bundle it is built from survives in `macos/`.
+            rm -rf src-tauri/target/release/bundle/dmg
+            sleep 15
+          done
+          echo "::error::bundling failed twice"
+          exit 1
+
+      # `if-no-files-found: error` is the actual assertion: a build that
+      # produced no installer is a failure this job exists to catch, and
+      # without it an empty upload would pass.
+      - uses: actions/upload-artifact@v7
         with:
-          # Resolved from the repository root, where the CLI is invoked — not
-          # from `src-tauri`, where the file lives.
-          args: --config src-tauri/tauri.ci.conf.json
-          uploadWorkflowArtifacts: true
-          workflowArtifactNamePattern: ci-[platform]-[arch]-[bundle]
+          name: ci-${{ matrix.platform }}
+          if-no-files-found: error
+          path: |
+            src-tauri/target/release/bundle/**/*.dmg
+            src-tauri/target/release/bundle/**/*.AppImage
+            src-tauri/target/release/bundle/**/*.deb
+            src-tauri/target/release/bundle/**/*.rpm
+            src-tauri/target/release/bundle/**/*.exe
+            src-tauri/target/release/bundle/**/*.msi
