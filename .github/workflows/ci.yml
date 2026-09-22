@@ -173,6 +173,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          args: --config tauri.ci.conf.json
+          # Resolved from the repository root, where the CLI is invoked — not
+          # from `src-tauri`, where the file lives.
+          args: --config src-tauri/tauri.ci.conf.json
           uploadWorkflowArtifacts: true
           workflowArtifactNamePattern: ci-[platform]-[arch]-[bundle]
