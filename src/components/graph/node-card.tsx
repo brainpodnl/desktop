@@ -53,14 +53,14 @@ export function NodeCard({
    * node — they simply have no card of their own to stand on.
    */
   attached: Resource[];
-  /** The graph's selection, which a card compares itself and its disks to. */
+  /** The selected resource's canonical URN. */
   selected: string | null;
-  onSelect: (name: string) => void;
+  onSelect: (urn: string) => void;
 }): ReactElement {
   const kind = KIND_STYLE[resource.kind];
   const rows = chipRows(chipsFor(resource));
   const state = readiness(resource);
-  const isSelected = selected === resource.name;
+  const isSelected = selected === resource.urn;
 
   return (
     <div
@@ -115,7 +115,7 @@ export function NodeCard({
         type="button"
         data-node-surface
         aria-pressed={isSelected}
-        onClick={() => onSelect(resource.name)}
+        onClick={() => onSelect(resource.urn)}
         className={cx(
           'block w-full px-3 py-3 text-left outline-none',
           attached.length > 0 ? 'rounded-t-xl' : 'rounded-xl',
@@ -167,7 +167,7 @@ export function NodeCard({
         <AttachedDisk
           key={disk.urn}
           disk={disk}
-          selected={selected === disk.name}
+          selected={selected === disk.urn}
           onSelect={onSelect}
         />
       ))}
@@ -195,7 +195,7 @@ function AttachedDisk({
 }: {
   disk: Resource;
   selected: boolean;
-  onSelect: (name: string) => void;
+  onSelect: (urn: string) => void;
 }): ReactElement {
   const accent = KIND_STYLE.Disk.accent;
   const state = readiness(disk);
@@ -205,7 +205,7 @@ function AttachedDisk({
       type="button"
       data-node-surface
       aria-pressed={selected}
-      onClick={() => onSelect(disk.name)}
+      onClick={() => onSelect(disk.urn)}
       /* The hairline is the card's own border colour rather than the kind's:
          the strip is part of the card, and a tinted rule across it would read
          as a second object stacked underneath. */

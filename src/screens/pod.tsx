@@ -202,7 +202,7 @@ export function PodScreen(): ReactElement {
       // A connection can belong to a pod that is not on screen, so opening one
       // switches pods rather than pointing at a node that is not there.
       if (tunnel.pod !== current) choosePod(tunnel.pod);
-      setSelected(tunnel.resource);
+      setSelected(tunnel.urn);
       setConnect(tunnel);
     },
     [current, choosePod],
@@ -503,7 +503,7 @@ function PodPane({
 }: {
   pod: Pod;
   selected: string | null;
-  onSelect: (name: string | null) => void;
+  onSelect: (urn: string | null) => void;
   /** A sidebar row waiting for this pane to open its credentials. */
   connect: Tunnel | null;
   onConnected: () => void;
@@ -598,11 +598,11 @@ function PodPane({
       // A session restored from Rust can already be starting without this
       // window having asked for it, and that must not read as an idle button.
       const starting = mine.some(
-        (tunnel) => tunnel.resource === resource.name && tunnel.state === 'starting',
+        (tunnel) => tunnel.urn === resource.urn && tunnel.state === 'starting',
       );
 
-      if (starting || pending[tunnelKey(pod.name, resource.name)] === true) {
-        map[resource.name] = true;
+      if (starting || pending[tunnelKey(pod.name, resource.urn)] === true) {
+        map[resource.urn] = true;
       }
     }
 
@@ -618,7 +618,7 @@ function PodPane({
     asked === null
       ? null
       : (mine.find(
-          (tunnel) => tunnel.resource === asked.resource.name && !asked.known.includes(tunnel.id),
+          (tunnel) => tunnel.urn === asked.resource.urn && !asked.known.includes(tunnel.id),
         ) ?? null);
 
   const showConnection = useCallback(
@@ -645,7 +645,7 @@ function PodPane({
     // request are somebody else's, and advancing to one of them would show
     // the credentials of a session the user did not just open.
     const opened = mine.find(
-      (tunnel) => tunnel.resource === asked.resource.name && !asked.known.includes(tunnel.id),
+      (tunnel) => tunnel.urn === asked.resource.urn && !asked.known.includes(tunnel.id),
     );
     if (opened?.state !== 'listening') return;
 
@@ -745,11 +745,11 @@ function PodPane({
         // map and a row in the sidebar; opening another tunnel to the same
         // resource is the moment to let go of it.
         const stale = mine.filter(
-          (tunnel) => tunnel.resource === resource.name && tunnel.state === 'failed',
+          (tunnel) => tunnel.urn === resource.urn && tunnel.state === 'failed',
         );
         for (const tunnel of stale) await close(tunnel.id);
 
-        await open(pod.name, resource.name, port);
+        await open(pod.name, resource, port);
       })();
     },
     [target, mine, close, open, dismissError, pod.name],
@@ -777,7 +777,7 @@ function PodPane({
    * panel says without anything here having to notice.
    */
   const inspected = useMemo(
-    () => list.find((entry) => entry.name === selected) ?? null,
+    () => list.find((entry) => entry.urn === selected) ?? null,
     [list, selected],
   );
 
@@ -914,7 +914,7 @@ function PodPane({
               resource={inspected}
               width={rail}
               overlay={overlay}
-              busy={busy[inspected.name] === true}
+              busy={busy[inspected.urn] === true}
               onWidth={setRail}
               onWidthCommit={writeInspectorWidth}
               onClose={() => onSelect(null)}

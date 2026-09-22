@@ -7,17 +7,18 @@
  * `brainpod` CLI, whose Rust struct denies unknown fields, so one extra key
  * there breaks the CLI.
  *
- * Entries are keyed by resource name, and an entry whose resource is missing
- * from the current revision is left alone rather than purged: a resource can
- * vanish in one deploy and come back in the next, and an arrangement somebody
- * made by hand should survive that round trip.
+ * Entries are keyed by canonical resource URN, and an entry whose resource is
+ * missing from the current revision is left alone rather than purged: a
+ * resource can vanish in one deploy and come back in the next, and an
+ * arrangement somebody made by hand should survive that round trip.
  */
 
 export type NodePosition = { x: number; y: number };
 
 export type NodePositions = Record<string, NodePosition>;
 
-const KEY_PREFIX = 'brainpod.desktop.graph.';
+const KEY_PREFIX = 'brainpod.desktop.graph.v2.';
+const LEGACY_KEY_PREFIX = 'brainpod.desktop.graph.';
 
 /**
  * Two numbers do not earn a schema dependency, but they do earn a guard: what
@@ -39,6 +40,7 @@ function narrow(value: unknown): NodePosition | null {
 
 export function readPositions(pod: string): NodePositions {
   try {
+    window.localStorage.removeItem(`${LEGACY_KEY_PREFIX}${pod}`);
     const raw = window.localStorage.getItem(`${KEY_PREFIX}${pod}`);
     if (raw === null) return {};
 
@@ -49,9 +51,9 @@ export function readPositions(pod: string): NodePositions {
     // every stored coordinate through the guard rather than past it.
     const entries: [string, unknown][] = Object.entries(stored);
     const positions: NodePositions = {};
-    for (const [name, entry] of entries) {
+    for (const [urn, entry] of entries) {
       const position = narrow(entry);
-      if (position !== null) positions[name] = position;
+      if (position !== null) positions[urn] = position;
     }
 
     return positions;
@@ -64,6 +66,7 @@ export function readPositions(pod: string): NodePositions {
 
 export function writePositions(pod: string, positions: NodePositions): void {
   try {
+    window.localStorage.removeItem(`${LEGACY_KEY_PREFIX}${pod}`);
     window.localStorage.setItem(`${KEY_PREFIX}${pod}`, JSON.stringify(positions));
   } catch {
     // Remembering the arrangement is a convenience; the drag already happened.
@@ -73,6 +76,7 @@ export function writePositions(pod: string, positions: NodePositions): void {
 export function clearPositions(pod: string): void {
   try {
     window.localStorage.removeItem(`${KEY_PREFIX}${pod}`);
+    window.localStorage.removeItem(`${LEGACY_KEY_PREFIX}${pod}`);
   } catch {
     // Nothing to report: the caller has already put the nodes back on screen.
   }

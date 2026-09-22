@@ -9,7 +9,14 @@ import {
   type ReactNode,
 } from 'react';
 
-import { listTunnels, onTunnelUpdate, startTunnel, stopTunnel, type Tunnel } from '@/lib/bridge';
+import {
+  listTunnels,
+  onTunnelUpdate,
+  startTunnel,
+  stopTunnel,
+  type Resource,
+  type Tunnel,
+} from '@/lib/bridge';
 import { errorMessage } from '@/lib/queries';
 
 type TunnelsContextValue = {
@@ -17,7 +24,7 @@ type TunnelsContextValue = {
   /** Keyed by `tunnelKey`, so a card knows whether its own button is busy. */
   pending: Record<string, boolean>;
   error: string | null;
-  open: (pod: string, resource: string, port: number) => Promise<void>;
+  open: (pod: string, resource: Resource, port: number) => Promise<void>;
   close: (id: string) => Promise<void>;
   dismissError: () => void;
 };
@@ -127,15 +134,16 @@ export function TunnelsProvider({ children }: { children: ReactNode }) {
   }, [commit]);
 
   const open = useCallback(
-    async (pod: string, resource: string, port: number) => {
-      const key = tunnelKey(pod, resource);
+    async (pod: string, resource: Resource, port: number) => {
+      const key = tunnelKey(pod, resource.urn);
       markPending(key, true);
       setError(null);
 
       try {
         // Resolves only once the tunnel is listening, so the card can show its
-        // address the moment the button stops spinning.
-        const tunnel = await startTunnel(pod, resource, port);
+        // address the moment the button stops spinning. The API resolves the
+        // readable database name to the canonical URN returned on the session.
+        const tunnel = await startTunnel(pod, resource.name, port);
         /*
          * Rust publishes the session and emits its updates before this call
          * returns, so the resolved value can already describe a session that
@@ -144,7 +152,7 @@ export function TunnelsProvider({ children }: { children: ReactNode }) {
          */
         if (!terminated.current.has(tunnel.id)) commit((current) => applyUpdate(current, tunnel));
       } catch (cause) {
-        setError(errorMessage(cause, `Could not open a tunnel to ${resource}.`));
+        setError(errorMessage(cause, `Could not open a tunnel to ${resource.name}.`));
       } finally {
         markPending(key, false);
       }
@@ -155,7 +163,7 @@ export function TunnelsProvider({ children }: { children: ReactNode }) {
   const close = useCallback(
     async (id: string) => {
       const target = tunnelsRef.current.find((tunnel) => tunnel.id === id);
-      const key = target ? tunnelKey(target.pod, target.resource) : id;
+      const key = target ? tunnelKey(target.pod, target.urn) : id;
       markPending(key, true);
 
       try {

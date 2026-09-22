@@ -39,11 +39,15 @@ export type EdgeLink = { via: string; detail: string | null };
  * carries it. Every branch reads a field the API actually returned — an edge
  * the spec does not explain carries no label rather than an invented one.
  */
-export function edgeLink(from: Resource, to: string): EdgeLink | null {
-  const rule = from.rules.find((entry) => entry.backend === to);
+export function edgeLink(from: Resource, to: Resource): EdgeLink | null {
+  const rule = from.rules.find((entry) => entry.backend === to.name);
   if (rule !== undefined) return { via: 'http', detail: `${rule.path} → :${rule.port}` };
 
-  const mount = from.mounts.find((entry) => entry.target === to);
+  const mount = from.mounts.find(
+    (entry) =>
+      entry.target === to.name &&
+      ((entry.file === null && to.kind === 'Disk') || (entry.file !== null && to.kind === 'Config')),
+  );
   if (mount !== undefined) {
     return {
       via: 'mount',
@@ -51,18 +55,20 @@ export function edgeLink(from: Resource, to: string): EdgeLink | null {
     };
   }
 
-  if (from.diskRef === to) return { via: 'disk', detail: null };
+  if (to.kind === 'Disk' && from.diskRef === to.name) return { via: 'disk', detail: null };
 
-  // `${db.uri}` in a value: the variable's own name is what the user will
-  // recognise, since that is what their code reads.
-  const variable = from.env.find((entry) => entry.value.includes(`\${${to}.`));
+  const variable = from.env.find((entry) =>
+    to.variables.some((target) => entry.value.includes(target.ref)),
+  );
   if (variable !== undefined) return { via: 'env', detail: variable.name };
 
   return null;
 }
 
 /**
- * Names, not URNs: `dependsOn` speaks in names and so does the layout.
+ * Canonical URNs, not display names: names are only unique within the scope
+ * each resource kind declares, while the URN identifies one resource across
+ * the whole pod.
  *
  * `points` is the whole connector in canvas coordinates, source anchor first
  * and target anchor last. Every consecutive pair shares an x or a y, so the
@@ -181,16 +187,16 @@ export function attachedDisks(resources: Resource[]): Map<string, Resource[]> {
     if (disk.kind !== 'Disk') continue;
 
     const hosts = resources.filter(
-      (entry) => entry.name !== disk.name && entry.dependsOn.includes(disk.name),
+      (entry) => entry.urn !== disk.urn && entry.dependsOn.includes(disk.urn),
     );
     const host = hosts.length === 1 ? hosts[0] : undefined;
     // A disk nothing points at has no card to sit on and stays a node of its
     // own, which is also the only way an unreferenced disk stays visible.
     if (host === undefined || host.kind === 'Disk') continue;
 
-    const list = attached.get(host.name) ?? [];
+    const list = attached.get(host.urn) ?? [];
     list.push(disk);
-    attached.set(host.name, list);
+    attached.set(host.urn, list);
   }
 
   for (const list of attached.values()) list.sort(byName);
@@ -336,7 +342,8 @@ export function cardHeight(resource: Resource, attached: Resource[] = []): numbe
 /** Byte order, not locale: the layout must not reshuffle between machines. */
 const byText = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
-const byName = (a: Resource, b: Resource): number => byText(a.name, b.name);
+const byName = (a: Resource, b: Resource): number =>
+  byText(a.name, b.name) || byText(a.urn, b.urn);
 
 /**
  * Sweeps are cheap but they do not converge: a graph can oscillate between two
@@ -640,15 +647,13 @@ export function layoutGraph(resources: Resource[]): GraphLayout {
   const attached = attachedDisks(resources);
   const absorbed = new Set<string>();
   for (const disks of attached.values()) {
-    for (const disk of disks) absorbed.add(disk.name);
+    for (const disk of disks) absorbed.add(disk.urn);
   }
 
-  // A name is the graph's identity, so a repeated name is one node. Keeping
-  // the first occurrence is what makes the edge lookup total.
   const index = new Map<string, Resource>();
   for (const resource of resources) {
-    if (absorbed.has(resource.name) || index.has(resource.name)) continue;
-    index.set(resource.name, resource);
+    if (absorbed.has(resource.urn)) continue;
+    index.set(resource.urn, resource);
   }
   if (index.size === 0) return { nodes: [], edges: [], width: 0, height: 0 };
 
@@ -658,11 +663,11 @@ export function layoutGraph(resources: Resource[]): GraphLayout {
     for (const dependency of resource.dependsOn) {
       // A resource that names itself, or names something outside the pod's
       // resource list, has nothing to point at.
-      if (dependency === resource.name || !index.has(dependency)) continue;
-      const key = `${resource.name}\u0000${dependency}`;
+      if (dependency === resource.urn || !index.has(dependency)) continue;
+      const key = `${resource.urn}\u0000${dependency}`;
       if (drawn.has(key)) continue;
       drawn.add(key);
-      links.push({ from: resource.name, to: dependency });
+      links.push({ from: resource.urn, to: dependency });
     }
   }
   links.sort((a, b) => byText(a.from, b.from) || byText(a.to, b.to));
@@ -717,20 +722,20 @@ export function layoutGraph(resources: Resource[]): GraphLayout {
     const column = columnAt(level);
     for (const resource of layer) {
       const slot: Slot = {
-        key: resource.name,
+        key: resource.urn,
         resource,
         layer: level,
         order: column.length,
         rank: 0,
         width: CARD_WIDTH,
-        height: cardHeight(resource, attached.get(resource.name) ?? []),
+        height: cardHeight(resource, attached.get(resource.urn) ?? []),
         centre: 0,
         y: 0,
         up: [],
         down: [],
       };
       column.push(slot);
-      slots.set(resource.name, slot);
+      slots.set(resource.urn, slot);
     }
   });
 
@@ -893,7 +898,7 @@ export function layoutGraph(resources: Resource[]): GraphLayout {
       if (resource === null) continue;
       nodes.push({
         resource,
-        attached: attached.get(resource.name) ?? [],
+        attached: attached.get(resource.urn) ?? [],
         x: slot.centre - slot.width / 2,
         y: slot.y,
         width: slot.width,
@@ -1004,7 +1009,9 @@ export function layoutGraph(resources: Resource[]): GraphLayout {
     /* The source resource is what explains the edge, because the reference is
        its own field: a Route's rule, an App's mount, a database's disk. */
     const declarer = index.get(wire.from);
-    const link = declarer === undefined ? null : edgeLink(declarer, wire.to);
+    const dependency = index.get(wire.to);
+    const link =
+      declarer === undefined || dependency === undefined ? null : edgeLink(declarer, dependency);
 
     if (wire.descends) return { from: wire.from, to: wire.to, points: routeChain(wire), link };
     const { source, target } = wire;

@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::fmt;
 use std::time::Duration;
 
@@ -61,6 +61,7 @@ pub struct Resource {
     pub image: Option<String>,
     pub hostname: Option<String>,
     pub domains: Vec<String>,
+    /// Canonical URNs of every resource this one references.
     pub depends_on: Vec<String>,
     /// The `apiVersion` the document was written under. A PUT replaces the
     /// whole document, so it has to travel back out with the rest of it.
@@ -280,21 +281,7 @@ impl Client {
             .map(|revision| vec![("revision", revision)])
             .unwrap_or_default();
         let value = self.get(&["v1", "pods", pod, "resources"], &query).await?;
-        let mut resources: Vec<Resource> =
-            entries(&value).iter().filter_map(parse_resource).collect();
-        resources.sort_by(|left, right| left.name.cmp(&right.name));
-
-        // A spec can name a resource that no longer exists, and an edge to a node
-        // the graph never draws would point at nothing.
-        let drawn: HashSet<String> = resources
-            .iter()
-            .map(|resource| resource.name.clone())
-            .collect();
-        for resource in &mut resources {
-            resource.depends_on.retain(|name| drawn.contains(name));
-        }
-
-        Ok(resources)
+        Ok(parse_resources(entries(&value)))
     }
 
     /// Accepts a resource name, a URN or a UUID, which is what the tunnel
@@ -607,7 +594,7 @@ fn parse_resource(value: &Value) -> Option<Resource> {
         } else {
             Vec::new()
         },
-        depends_on: dependencies(kind, value.pointer("/content/spec")),
+        depends_on: Vec::new(),
         api_version: text(value.pointer("/content/apiVersion")).unwrap_or_default(),
         locked: flag(value.get("locked")),
         replica_states: if workload {
@@ -861,10 +848,7 @@ fn parse_mutation(value: &Value) -> Result<ResourceMutation> {
         .ok_or_else(|| anyhow!("Brainpod API accepted the write without naming a revision"))?;
     Ok(ResourceMutation {
         revision_id,
-        resources: items(value.get("resources"))
-            .iter()
-            .filter_map(parse_resource)
-            .collect(),
+        resources: parse_resources(items(value.get("resources"))),
     })
 }
 
@@ -876,79 +860,108 @@ fn parse_diff_entry(value: &Value) -> Option<DiffEntry> {
     })
 }
 
-/// Every resource name this one points at, de-duplicated and in the order the
-/// spec lists them. The caller drops names that are not resources of the pod.
-fn dependencies(kind: &str, spec: Option<&Value>) -> Vec<String> {
-    let mut names = Vec::new();
-    let Some(spec) = spec else {
-        return names;
-    };
+/// Parses one complete resource graph. Resource documents carry canonical
+/// URNs, while several spec fields are presented as names for people to read;
+/// resolving the edges after every document has been parsed keeps those two
+/// concerns separate and lets valid same-name resources remain distinct.
+fn parse_resources(values: &[Value]) -> Vec<Resource> {
+    let mut resources: Vec<Resource> = values.iter().filter_map(parse_resource).collect();
+    resolve_dependencies(&mut resources);
+    resources.sort_by(|left, right| {
+        left.name
+            .cmp(&right.name)
+            .then_with(|| left.urn.cmp(&right.urn))
+    });
+    resources
+}
 
-    match kind {
-        "Route" => {
-            for rule in items(spec.get("rules")) {
-                push_ref(&mut names, rule.get("backendRef"));
+fn resolve_dependencies(resources: &mut [Resource]) {
+    let mut targets: HashMap<String, HashMap<String, String>> = HashMap::new();
+    let mut names: HashMap<String, Option<String>> = HashMap::new();
+    let mut variables: HashMap<String, Option<String>> = HashMap::new();
+
+    for resource in resources.iter() {
+        targets
+            .entry(resource.kind.clone())
+            .or_default()
+            .insert(resource.name.clone(), resource.urn.clone());
+
+        match names.get_mut(&resource.name) {
+            Some(target) if target.as_deref() != Some(resource.urn.as_str()) => *target = None,
+            Some(_) => {}
+            None => {
+                names.insert(resource.name.clone(), Some(resource.urn.clone()));
             }
         }
-        "Postgres" | "MariaDB" | "Valkey" | "MSSQL" => push_ref(&mut names, spec.get("diskRef")),
-        "App" => {
-            // A mount is either a config file or a disk, never both.
-            for mount in items(spec.get("mounts")) {
-                push_ref(&mut names, mount.get("disk"));
-                push_ref(&mut names, mount.get("config"));
-            }
-            for variable in items(spec.get("env")) {
-                if let Some(value) = variable.get("value").and_then(Value::as_str) {
-                    push_templates(&mut names, value);
+
+        for variable in &resource.variables {
+            let Some(body) = template_body(&variable.reference) else {
+                continue;
+            };
+            match variables.get_mut(body) {
+                Some(target) if target.as_deref() != Some(resource.urn.as_str()) => *target = None,
+                Some(_) => {}
+                None => {
+                    variables.insert(body.to_owned(), Some(resource.urn.clone()));
                 }
             }
         }
-        _ => {}
     }
 
-    names
-}
-
-fn push_ref(names: &mut Vec<String>, value: Option<&Value>) {
-    if let Some(reference) = value.and_then(Value::as_str) {
-        push_name(names, resource_name(reference));
+    for resource in resources {
+        let mut dependencies = Vec::new();
+        match resource.kind.as_str() {
+            "Route" => {
+                for rule in &resource.rules {
+                    push_target(&mut dependencies, &targets, "App", &rule.backend);
+                }
+            }
+            "Postgres" | "MariaDB" | "Valkey" | "MSSQL" => {
+                if let Some(name) = resource.disk_ref.as_deref() {
+                    push_target(&mut dependencies, &targets, "Disk", name);
+                }
+            }
+            "App" => {
+                for mount in &resource.mounts {
+                    let kind = if mount.file.is_some() {
+                        "Config"
+                    } else {
+                        "Disk"
+                    };
+                    push_target(&mut dependencies, &targets, kind, &mount.target);
+                }
+                for variable in &resource.env {
+                    push_template_dependencies(
+                        &mut dependencies,
+                        &variables,
+                        &names,
+                        &variable.value,
+                    );
+                }
+            }
+            _ => {}
+        }
+        resource.depends_on = dependencies;
     }
 }
 
-/// Cross-resource references travel as URNs — `urn:brain:<kind>:default:<name>`
-/// with a lowercase kind — while an environment template names the resource
-/// directly. Both reduce to the name, which is what a node is keyed by, so
-/// every reference passes through here rather than each call site guessing
-/// which form it holds.
-fn resource_name(reference: &str) -> &str {
-    let reference = reference.trim();
-    // The whole five-segment shape, not merely a `urn:` prefix and a colon
-    // somewhere: a truncated `urn:brain:disk` would otherwise yield `disk`,
-    // naming the kind as if it were a resource.
-    match reference.strip_prefix("urn:") {
-        Some(rest) if rest.split(':').count() == 4 => rest.rsplit(':').next().unwrap_or(reference),
-        _ => reference,
+fn push_target(
+    dependencies: &mut Vec<String>,
+    targets: &HashMap<String, HashMap<String, String>>,
+    kind: &str,
+    name: &str,
+) {
+    if let Some(urn) = targets.get(kind).and_then(|by_name| by_name.get(name)) {
+        push_dependency(dependencies, urn);
     }
 }
 
-/// A reference as the panel wants it: the name alone, or nothing where the
-/// spec left the reference out.
-fn name_ref(value: Option<&Value>) -> Option<String> {
-    Some(resource_name(value.and_then(Value::as_str)?).to_owned())
-}
-
-fn push_name(names: &mut Vec<String>, name: &str) {
-    let name = name.trim();
-    if name.is_empty() || names.iter().any(|existing| existing == name) {
-        return;
-    }
-    names.push(name.to_owned());
-}
-
-/// `PGWEB_DATABASE_URL = ${postgres.uri}` is how an app names the resource it
-/// talks to, so the segment before the first dot is an edge. A `${…}` without a
-/// dot interpolates something else and names no resource.
-fn push_templates(names: &mut Vec<String>, value: &str) {
+fn push_template_dependencies(
+    dependencies: &mut Vec<String>,
+    variables: &HashMap<String, Option<String>>,
+    names: &HashMap<String, Option<String>>,
+    value: &str,
+) {
     let mut rest = value;
     while let Some(open) = rest.find("${") {
         rest = &rest[open + 2..];
@@ -957,10 +970,42 @@ fn push_templates(names: &mut Vec<String>, value: &str) {
         };
         let (body, tail) = rest.split_at(close);
         rest = &tail[1..];
-        if let Some((name, _)) = body.split_once('.') {
-            push_name(names, name);
+        if let Some(Some(urn)) = variables.get(body) {
+            push_dependency(dependencies, urn);
+            continue;
+        }
+        if let Some((name, _)) = body.split_once('.')
+            && let Some(Some(urn)) = names.get(name)
+        {
+            push_dependency(dependencies, urn);
         }
     }
+}
+
+fn push_dependency(dependencies: &mut Vec<String>, urn: &str) {
+    if !dependencies.iter().any(|existing| existing == urn) {
+        dependencies.push(urn.to_owned());
+    }
+}
+
+fn template_body(reference: &str) -> Option<&str> {
+    reference
+        .strip_prefix("${")
+        .and_then(|body| body.strip_suffix('}'))
+}
+
+/// Cross-resource references are shown by name in the inspector. Identity is
+/// retained separately in `depends_on`, where the graph uses canonical URNs.
+fn resource_name(reference: &str) -> &str {
+    let reference = reference.trim();
+    match reference.strip_prefix("urn:") {
+        Some(rest) if rest.split(':').count() == 4 => rest.rsplit(':').next().unwrap_or(reference),
+        _ => reference,
+    }
+}
+
+fn name_ref(value: Option<&Value>) -> Option<String> {
+    Some(resource_name(value.and_then(Value::as_str)?).to_owned())
 }
 
 fn text(value: Option<&Value>) -> Option<String> {
@@ -1050,3 +1095,75 @@ impl fmt::Display for ApiError {
 }
 
 impl std::error::Error for ApiError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn same_name_route_and_app_keep_distinct_graph_identity() {
+        let resources = parse_resources(&[
+            json!({
+                "urn": "urn:brain:app:default:web",
+                "content": {
+                    "kind": "App",
+                    "metadata": { "name": "web" },
+                    "spec": {}
+                }
+            }),
+            json!({
+                "urn": "urn:brain:route:default:web",
+                "content": {
+                    "kind": "Route",
+                    "metadata": { "name": "web" },
+                    "spec": {
+                        "rules": [{
+                            "name": "web",
+                            "path": "/",
+                            "port": 8080,
+                            "backendRef": "urn:brain:app:default:web"
+                        }]
+                    }
+                },
+                "variables": [{
+                    "name": "host",
+                    "ref": "${web.host}",
+                    "secret": false,
+                    "resolved": true,
+                    "value": "site.brainpod.io"
+                }]
+            }),
+            json!({
+                "urn": "urn:brain:app:default:consumer",
+                "content": {
+                    "kind": "App",
+                    "metadata": { "name": "consumer" },
+                    "spec": {
+                        "env": [{
+                            "name": "SITE_HOST",
+                            "value": "${web.host}"
+                        }]
+                    }
+                }
+            }),
+        ]);
+
+        assert_eq!(resources.len(), 3);
+        let route = resources
+            .iter()
+            .find(|resource| resource.kind == "Route")
+            .expect("route should remain in the graph");
+        assert_eq!(
+            route.depends_on,
+            vec!["urn:brain:app:default:web".to_owned()]
+        );
+        let consumer = resources
+            .iter()
+            .find(|resource| resource.name == "consumer")
+            .expect("consumer should remain in the graph");
+        assert_eq!(
+            consumer.depends_on,
+            vec!["urn:brain:route:default:web".to_owned()]
+        );
+    }
+}

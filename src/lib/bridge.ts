@@ -135,8 +135,8 @@ export type Resource = {
   hostname: string | null;
   domains: string[];
   /**
-   * Names of the resources this one points at, resolved from `backendRef`,
-   * `diskRef`, `mounts[].disk`, `mounts[].config` and `${name.field}` env
+   * Canonical URNs of the resources this one points at, resolved from
+   * `backendRef`, `diskRef`, `mounts[].disk|.config` and `${name.field}` env
    * templates. Drawn as an edge from this node down to each target.
    */
   dependsOn: string[];

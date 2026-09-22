@@ -336,7 +336,7 @@ type Arrangement = { pod: string; positions: NodePositions; persist: boolean };
 
 /** The gesture in flight. A ref, because a drag must not re-render to track. */
 type Grab = {
-  name: string;
+  urn: string;
   pointerId: number;
   /** Pointer to the card's top-left, so the card tracks from where it was held. */
   grabX: number;
@@ -370,7 +370,7 @@ export function ResourceGraph({
   pod: string;
   resources: Resource[];
   selected: string | null;
-  onSelect: (name: string | null) => void;
+  onSelect: (urn: string | null) => void;
   /**
    * How many pixels of this canvas's right edge something else is covering.
    * The details rail takes a column of its own when the pane can afford one
@@ -452,14 +452,14 @@ export function ResourceGraph({
   const nodes = useMemo(
     () =>
       layout.nodes.map((node) => {
-        const moved = positions[node.resource.name];
+        const moved = positions[node.resource.urn];
         return moved === undefined ? node : { ...node, x: moved.x, y: moved.y };
       }),
     [layout, positions],
   );
 
   const placed = useMemo(
-    () => new Map(nodes.map((node) => [node.resource.name, node])),
+    () => new Map(nodes.map((node) => [node.resource.urn, node])),
     [nodes],
   );
 
@@ -467,7 +467,7 @@ export function ResourceGraph({
   const arrival = useMemo(() => {
     const delays = new Map<string, number>();
     nodes.forEach((node, index) => {
-      delays.set(node.resource.name, Math.min(index, STAGGER_STEPS) * STAGGER);
+      delays.set(node.resource.urn, Math.min(index, STAGGER_STEPS) * STAGGER);
     });
     return delays;
   }, [nodes]);
@@ -868,8 +868,8 @@ export function ResourceGraph({
   const revealed = useRef<string | null>(null);
 
   const centre = useCallback(
-    (name: string) => {
-      const node = placedRef.current.get(name);
+    (urn: string) => {
+      const node = placedRef.current.get(urn);
       if (node === undefined) return null;
 
       return anchored({ x: node.x + node.width / 2, y: node.y + node.height / 2 });
@@ -906,10 +906,10 @@ export function ResourceGraph({
     glide.follow(() => centre(selected), reduced || !chosen);
   }, [selected, over, occluded, reduced, glide, centre]);
 
-  const place = useCallback((name: string, position: NodePosition, persist: boolean) => {
+  const place = useCallback((urn: string, position: NodePosition, persist: boolean) => {
     setArrangement((current) => ({
       pod: current.pod,
-      positions: { ...current.positions, [name]: position },
+      positions: { ...current.positions, [urn]: position },
       persist,
     }));
   }, []);
@@ -927,7 +927,7 @@ export function ResourceGraph({
 
     swallowClick.current = false;
     grab.current = {
-      name: node.resource.name,
+      urn: node.resource.urn,
       pointerId: event.pointerId,
       grabX: event.clientX - rect.left - node.x,
       grabY: event.clientY - rect.top - node.y,
@@ -948,7 +948,7 @@ export function ResourceGraph({
           Math.abs(event.clientY - active.startY) >= DRAG_THRESHOLD;
         if (!travelled) return;
         active.moved = true;
-        setDragging(active.name);
+        setDragging(active.urn);
         // A card being carried by hand and a canvas being carried by the
         // window are two moves on the same pixels; the hand wins.
         glide.stop();
@@ -972,7 +972,7 @@ export function ResourceGraph({
       if (rect === undefined) return;
 
       place(
-        active.name,
+        active.urn,
         {
           x: Math.max(0, Math.round(event.clientX - rect.left - active.grabX)),
           y: Math.max(0, Math.round(event.clientY - rect.top - active.grabY)),
@@ -1080,7 +1080,7 @@ export function ResourceGraph({
       event.preventDefault();
       const distance = event.shiftKey ? NUDGE_COARSE : NUDGE;
       place(
-        node.resource.name,
+        node.resource.urn,
         {
           x: Math.max(0, node.x + step.x * distance),
           y: Math.max(0, node.y + step.y * distance),
@@ -1426,11 +1426,11 @@ export function ResourceGraph({
 
             {nodes.map((node, index) => (
               <motion.div
-                key={node.resource.name}
-                data-resource={node.resource.name}
+                key={node.resource.urn}
+                data-resource={node.resource.urn}
                 className={cx(
                   'absolute',
-                  dragging === node.resource.name ? 'z-10 cursor-grabbing' : 'cursor-grab',
+                  dragging === node.resource.urn ? 'z-10 cursor-grabbing' : 'cursor-grab',
                 )}
                 style={{ left: node.x, top: node.y }}
                 initial={reduced ? false : { opacity: 0, y: 6 }}
