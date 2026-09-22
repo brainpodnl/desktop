@@ -6,6 +6,7 @@
 | ------------- | ------------------------------------- | --------------------------------------------------------------------------- |
 | `ci.yml`      | PR, push to `main`, merge queue       | Version agreement, `tsc`, `vite build`, `cargo fmt`/`clippy`/`test`, and an unsigned bundle on macOS arm64, Linux x86_64 and Windows x86_64 |
 | `release.yml` | Release published, or manual on a tag | Builds five targets at that tag and uploads them onto the release            |
+| `notarize.yml`| Every 30 minutes, or manual           | Staples disk images whose notarization Apple had not finished when the release ended |
 
 ## Cutting a release
 
@@ -125,29 +126,55 @@ is stranded on its current version: a new key would produce signatures the
 shipped `pubkey` rejects, and the only way out is asking every user to download
 a fresh build by hand.
 
-### macOS signing and notarization (configured, currently off in CI)
+### macOS signing and notarization
 
-All six secrets are loaded, but the macOS jobs only use them when the
-`MACOS_SIGNING` repository variable is exactly `on`. It is `off`, so CI builds
-macOS unsigned and signed bundles are produced locally instead.
-
-The reason is Apple, not the configuration: `notarytool --wait` blocks until
-the notary service returns a verdict and that service publishes no upper bound.
-Submissions from this certificate sat in `In Progress` past 107 minutes with
-`Developer ID Notary Service` reporting `operational`, which matches the
-backlog other teams reported through September 2026 and Apple's own note that
-a new signing identity is held for additional analysis until the service
-learns to recognise it. A release must not be hostage to that.
+Signing is gated on the `MACOS_SIGNING` repository variable, which must be
+exactly `on`. The six secrets stay loaded regardless, so the gate is the only
+switch:
 
 ```sh
-gh variable set MACOS_SIGNING --repo brainpodnl/desktop --body on   # re-enable
+gh variable set MACOS_SIGNING --repo brainpodnl/desktop --body on
+gh variable set MACOS_SIGNING --repo brainpodnl/desktop --body off
 ```
 
-With it `on`, each macOS job signs the `.app`, notarizes it, staples the
-ticket, and builds the `.dmg` and updater tarball around the stapled bundle.
+Signing and notarization are deliberately separate. `tauri build` notarizes
+inline — it submits the app and blocks on `notarytool --wait`, which has no
+upper bound — and Apple's notary service can hold a submission indefinitely.
+Submissions from this certificate on its first day sat in `In Progress` past
+107 minutes while `Developer ID Notary Service` reported `operational`, which
+matches the backlog other teams reported through September 2026 and Apple's
+own note that a new signing identity is held for additional analysis until the
+service learns to recognise it. Two release runs were cancelled over it.
+
+So the macOS jobs never receive `APPLE_ID`, `APPLE_PASSWORD` or
+`APPLE_TEAM_ID`: with only the three signing values in the environment, the
+bundler signs and skips notarization, which costs seconds. Notarization then
+runs as its own step after the bundles are already on the release:
+
+1. `release.yml` submits the `.dmg` and waits at most
+   `MACOS_NOTARIZE_WAIT_MINUTES` (default 10). If Apple answers, the disk
+   image is stapled and re-uploaded before the job ends, and the release is
+   complete.
+2. Otherwise the step writes a `notarization-<slug>.json` marker asset naming
+   the submission and exits green. The release carries signed but unstapled
+   disk images for the moment.
+3. `notarize.yml` runs every 30 minutes. A Linux job checks whether any marker
+   exists — seconds, and no macOS minutes — and only then does a macOS job
+   staple the accepted submissions, replace both the stamped and version-less
+   copies, and delete the marker.
+
+A rejection fails loudly; a submission still queued just leaves the marker for
+the next pass. No job ever waits on Apple for longer than the bound.
+
+The ticket is stapled to the `.dmg`, not to the `.app` inside it, because
+stapling the app would mean rebuilding and re-signing the disk image around it.
+Apple supports stapling a disk image directly. The cost is that a Mac that is
+offline on first launch cannot see the app's own ticket; every online Mac
+resolves it against Apple.
+
 `release.yml` forwards only non-empty secrets, because an empty
 `APPLE_CERTIFICATE` would make the bundler run `security import` on nothing
-and fail.
+and fail the bundle.
 
 | Secret                       | Value                                                            |
 | ---------------------------- | ---------------------------------------------------------------- |
@@ -181,46 +208,55 @@ spctl -a -vvv -t install /Applications/Brainpod.app
 
 ### Signing a macOS build locally
 
-While `MACOS_SIGNING` is `off`, the macOS assets on a release come from a Mac
-that holds the Developer ID certificate in its login keychain. Credentials live
-in a `notarytool` keychain profile rather than in the shell:
+Needed when `MACOS_SIGNING` is `off`, or to reproduce a release by hand. The
+Mac must hold the Developer ID certificate in its login keychain. Credentials
+go in a `notarytool` profile rather than the shell:
 
 ```sh
 xcrun notarytool store-credentials brainpod \
   --apple-id jeroen@rinzema.dev --team-id 97JW6XK5WV
 ```
 
-Build one architecture at a time, from a checkout of the tag being released so
-the bundled version matches:
+That profile lives in the data-protection keychain, which the `security` tool
+cannot read — there is no way to pull the password back out into an
+environment variable, which is the point. `notarize-dmg.mjs` reads
+`APPLE_KEYCHAIN_PROFILE` for exactly this case.
+
+Build from a checkout of the tag being released so the stamped version
+matches. `APPLE_CERTIFICATE` must stay unset: the identity is already in the
+keychain, and setting it would import a second copy into a throwaway one.
+Leaving the notary credentials unset is deliberate too — it makes the bundler
+sign and skip notarization, the same split CI uses.
 
 ```sh
 export APPLE_SIGNING_IDENTITY='Developer ID Application: CloudProud B.V. (97JW6XK5WV)'
-export APPLE_ID=jeroen@rinzema.dev APPLE_TEAM_ID=97JW6XK5WV
-export APPLE_PASSWORD="$(security find-generic-password -s 'com.apple.gke.notary.tool' -a brainpod -w)"
 export TAURI_SIGNING_PRIVATE_KEY="$(cat ~/.tauri/brainpod-desktop-updater.key)"
 export TAURI_SIGNING_PRIVATE_KEY_PASSWORD=''
 pnpm tauri build --target aarch64-apple-darwin
 pnpm tauri build --target x86_64-apple-darwin
 ```
 
-The certificate is already in the keychain, so `APPLE_CERTIFICATE` must stay
-unset — setting it would make the bundler import a second copy into a throwaway
-keychain for no reason. Each build blocks on notarization exactly as CI did; it
-is merely a wait nobody is paying runner time for.
-
-Then upload, replacing the unsigned assets the release already carries:
+Then notarize and upload each architecture with the same script CI runs:
 
 ```sh
-cd src-tauri/target/aarch64-apple-darwin/release/bundle
-gh release upload v0.1.0 --repo brainpodnl/desktop --clobber \
-  dmg/Brainpod_0.1.0_aarch64.dmg macos/Brainpod.app.tar.gz macos/Brainpod.app.tar.gz.sig
+export APPLE_KEYCHAIN_PROFILE=brainpod
+node .github/scripts/notarize-dmg.mjs submit v0.1.0 arm64-macos aarch64-apple-darwin 20
+node .github/scripts/notarize-dmg.mjs submit v0.1.0 amd64-macos x86_64-apple-darwin 20
 ```
 
-The updater artifacts are renamed per platform and `latest.json` carries the
-`.sig` contents inline, so the two `darwin-*` signature fields in `latest.json`
-have to be replaced by hand to match the locally built tarballs. Verify with
-the three commands above before uploading; an unstapled bundle still passes
-Gatekeeper on a networked Mac, but only a stapled one passes offline.
+The updater tarballs are separate: `latest.json` names them by asset id and
+carries their `.sig` inline, so replacing them by hand means uploading the new
+`Brainpod_<version>_<arch>.app.tar.gz` and `.sig`, then patching both the
+`url` and `signature` of the four `darwin-*` keys. The asset id changes on
+every `--clobber`, so the url has to be re-read after the upload, not before.
+
+Verify what a user actually downloads, quarantine included:
+
+```sh
+curl -fsSLo dl.dmg https://github.com/brainpodnl/desktop/releases/latest/download/Brainpod-arm64-macos.dmg
+xattr -w com.apple.quarantine '0083;00000000;Safari;' dl.dmg
+spctl -a -vvv -t open --context context:primary-signature dl.dmg   # accepted, Notarized Developer ID
+```
 
 ### Windows signing (optional, not yet configured)
 

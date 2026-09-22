@@ -1,0 +1,79 @@
+name: Notarize
+
+# The sweeper for notarization that Apple did not finish while the release was
+# building. `release.yml` signs, uploads, submits the disk image and waits only
+# a bounded number of minutes; anything still queued leaves a
+# `notarization-<slug>.json` marker on the release naming the submission.
+#
+# This workflow staples those. It runs on a schedule because the alternative —
+# a job that sits on `notarytool --wait` — is the open-ended run the split was
+# meant to remove. Each pass is a cheap Linux check of whether any marker
+# exists at all; a macOS runner is only started when there is something to
+# staple, because stapler does not exist anywhere else.
+on:
+  schedule:
+    # Every half hour. A pass with nothing to do is one Linux job that ends in
+    # seconds, and a release stays unstapled for at most that long after Apple
+    # answers.
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to sweep (default: the latest release)'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Look for pending notarization
+    runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.pending.outputs.tag }}
+      pending: ${{ steps.pending.outputs.pending }}
+    steps:
+      - id: pending
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REQUESTED: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          tag="${REQUESTED:-$(gh release view --repo '${{ github.repository }}' --json tagName --jq .tagName)}"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+          # A marker asset is the whole state: present means a submission is
+          # outstanding, absent means every disk image is already stapled.
+          if gh release view "$tag" --repo '${{ github.repository }}' --json assets \
+               --jq '.assets[].name' | grep -q '^notarization-.*\.json$'; then
+            echo 'pending=true' >> "$GITHUB_OUTPUT"
+            echo "$tag has pending notarization"
+          else
+            echo 'pending=false' >> "$GITHUB_OUTPUT"
+            echo "$tag has nothing to staple"
+          fi
+
+  staple:
+    name: Staple ${{ needs.check.outputs.tag }}
+    needs: check
+    if: needs.check.outputs.pending == 'true'
+    runs-on: macos-latest
+    # Stapling is seconds once a ticket exists. This only guards a hang.
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+
+      # Submissions that are still `In Progress` leave the marker in place and
+      # the job ends green — the next scheduled pass tries again. Only a
+      # rejection fails this workflow, because a rejection is a real defect in
+      # the bundle rather than a queue to outwait.
+      - name: Staple every accepted submission
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: node .github/scripts/notarize-dmg.mjs finish '${{ needs.check.outputs.tag }}'
