@@ -5,142 +5,123 @@
 
 # Brainpod Desktop
 
-A desktop window onto your Brainpod pods: the resource graph at a chosen revision, its health, the
-events a resource is emitting right now, and database tunnels bound to real ports on this machine.
+**Your apps, hosted in Europe — on your desk.**
 
-## Install
+[Brainpod](https://brainpod.io) runs the things you build: your app, its routes and domains, its
+Postgres, MariaDB, Valkey or SQL Server database, its disks and config — all in one **pod**, all
+hosted in Europe. You describe what you want, Brainpod runs it, and nothing changes until you
+deploy.
 
-Every row links the newest build, whatever version that is — each release uploads a version-less
-copy of its installers beside the stamped ones, so these links never go stale:
+Brainpod Desktop is the window you keep open while you work. Instead of tabbing to a browser or
+remembering a command, you glance at it: there is your pod, drawn as the graph it actually is, in
+the colours of the engines inside it — healthy or not, wired the way you wired it.
 
-| Platform       | Download                                                                                                                                                                                                                                                            |
-| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| macOS arm64    | [`.dmg`](https://github.com/brainpodnl/desktop/releases/latest/download/Brainpod-arm64-macos.dmg)                                                                                                                                                                     |
-| macOS x86_64   | [`.dmg`](https://github.com/brainpodnl/desktop/releases/latest/download/Brainpod-amd64-macos.dmg)                                                                                                                                                                     |
+## What you can do with it
+
+- **See the whole pod at a glance.** Every app, route, database, disk and config, with the links
+  between them drawn for you. Green means running.
+- **Watch what your app is doing right now.** Application logs, HTTP access and platform events,
+  live, next to the resource that emitted them.
+- **Connect your own tools to a hosted database.** Open a secure tunnel and your database gets a
+  real port on this machine — point `psql`, DBeaver, TablePlus or your local dev server at
+  `localhost` and work as if it were next door. Tunnels stay open in the sidebar while you move
+  around.
+- **Scale and resize without leaving the window.** Change replicas or instance size; it lands in
+  the pod's draft.
+- **Deploy when you're ready.** Edits sit safely in the draft until you press Deploy — what's
+  running keeps running until you say otherwise.
+- **Jump back in time.** Read the graph at any revision to see how the pod looked when it was
+  deployed.
+
+It's a real Mac-style app — a vibrancy sidebar, native menus, light and dark — not a website in a
+frame. And it shares its sign-in with the `brainpod` CLI, so you log in once.
+
+## Download
+
+Every link below is always the newest build:
+
+| Platform       | Download |
+| -------------- | -------- |
+| macOS arm64    | [`.dmg`](https://github.com/brainpodnl/desktop/releases/latest/download/Brainpod-arm64-macos.dmg) |
+| macOS x86_64   | [`.dmg`](https://github.com/brainpodnl/desktop/releases/latest/download/Brainpod-amd64-macos.dmg) |
 | Linux x86_64   | [`.AppImage`](https://github.com/brainpodnl/desktop/releases/latest/download/Brainpod-amd64-linux.AppImage) · [`.deb`](https://github.com/brainpodnl/desktop/releases/latest/download/Brainpod-amd64-linux.deb) · [`.rpm`](https://github.com/brainpodnl/desktop/releases/latest/download/Brainpod-amd64-linux.rpm) |
 | Linux arm64    | [`.AppImage`](https://github.com/brainpodnl/desktop/releases/latest/download/Brainpod-arm64-linux.AppImage) · [`.deb`](https://github.com/brainpodnl/desktop/releases/latest/download/Brainpod-arm64-linux.deb) · [`.rpm`](https://github.com/brainpodnl/desktop/releases/latest/download/Brainpod-arm64-linux.rpm) |
-| Windows x86_64 | [`-setup.exe`](https://github.com/brainpodnl/desktop/releases/latest/download/Brainpod-amd64-windows-setup.exe) (NSIS) · [`.msi`](https://github.com/brainpodnl/desktop/releases/latest/download/Brainpod-amd64-windows.msi) (WiX)                                     |
+| Windows x86_64 | [`-setup.exe`](https://github.com/brainpodnl/desktop/releases/latest/download/Brainpod-amd64-windows-setup.exe) · [`.msi`](https://github.com/brainpodnl/desktop/releases/latest/download/Brainpod-amd64-windows.msi) |
 
-The [release page](https://github.com/brainpodnl/desktop/releases/latest) carries the same
-builds under their version-stamped names.
+Older versions live on the [releases page](https://github.com/brainpodnl/desktop/releases).
 
-macOS requires 11.0 or newer. The macOS builds are not notarized yet, so Gatekeeper refuses the
-first launch; clear the quarantine attribute after dragging the app into `/Applications`:
+Launch it, sign in through your browser, and your pods are there.
 
-```sh
-xattr -dr com.apple.quarantine /Applications/Brainpod.app
-```
+### Before the first launch
 
-Linux bundles are built on Ubuntu 24.04 and need glibc 2.39 or newer — Ubuntu 24.04, Debian 13,
-Fedora 40 and up. Windows installers are unsigned, so SmartScreen warns on first run.
+- **macOS 11 or newer.** The builds aren't notarized yet, so macOS blocks the first launch. Drag
+  Brainpod into `/Applications`, then run once:
 
-Launch it and sign in; the browser round trip writes the API token into the shared CLI config.
+  ```sh
+  xattr -dr com.apple.quarantine /Applications/Brainpod.app
+  ```
 
-### Updates
+- **Linux** builds need glibc 2.39 or newer — Ubuntu 24.04, Debian 13, Fedora 40 and up.
+- **Windows** installers are unsigned, so SmartScreen warns the first time. Choose *More info ▸
+  Run anyway*.
 
-The app checks `releases/latest/download/latest.json` once per launch, installs a newer version in
-the background, and then offers a restart in the sidebar's **Updates** band — the same band the
-CLI and the agent skill use, because they are one question: something on this machine is not the
-current version. Each row is named for what it is (`Brainpod`, `Command line`, `Agent skill`)
-rather than being told apart by a capital letter and a monospace font.
-The band is absent until there is something to act on, and it stays until acted on rather than
-being dismissible, since it occupies its own space in the rail instead of floating over the graph. Updater payloads are signature-verified against the
-public key baked into `src-tauri/tauri.conf.json`, so an unsigned or foreign build is never
-accepted. A failed or unreachable check is silent.
+### Staying up to date
 
-### Command line
+Brainpod Desktop updates itself. It checks on launch, downloads quietly in the background, and
+asks for a restart when it's ready — only ever accepting builds signed by us. If anything else on
+your machine has fallen behind, the sidebar's **Updates** band tells you in the same place.
+
+## The command line, installed for you
 
 Settings ▸ **Command line** installs the [`brainpod` CLI](https://github.com/brainpodnl/cli) —
-the tool this window shares its config file and API token with, and the one the agent skill
-drives.
+the same tool, without the window — and keeps it current. It shares this app's sign-in, so
+there's nothing else to configure.
 
-A `brainpod` that is already on this machine is **updated where it stands**, so a developer ends
-up with one CLI kept current rather than two competing on `PATH`. Only a real file is adopted: a
-symlink in `/opt/homebrew/bin` or `~/.local/bin` points into a package manager's own store, and
-writing through it would overwrite that store's file, so such a copy is reported and left alone.
-A machine with no CLI on it gets one in a directory the platform already puts on `PATH` —
-`/usr/local/bin` on macOS and Linux (the first line of `/etc/paths`, and where Zed, VS Code and
-OrbStack put theirs), `%LOCALAPPDATA%\Microsoft\WindowsApps` on Windows. **Nothing in your shell
-profile is ever edited.**
+If you already have `brainpod`, it's updated where it is, so you never end up with two of them.
+Installs managed by Homebrew or another package manager are left to that package manager. A fresh
+install goes somewhere your shell already looks (`/usr/local/bin` on macOS and Linux,
+`%LOCALAPPDATA%\Microsoft\WindowsApps` on Windows). **Your shell profile is never touched**, and
+every download is checksum-verified before anything is written.
 
-| OS      | Architecture      | Release asset                   |
-| ------- | ----------------- | ------------------------------- |
-| macOS   | Apple silicon     | `brainpod-arm64-macos.tar.gz`   |
-| macOS   | Intel             | `brainpod-amd64-macos.tar.gz`   |
-| Linux   | `arm64`           | `brainpod-arm64-linux.tar.gz`   |
-| Linux   | `x86_64`          | `brainpod-amd64-linux.tar.gz`   |
-| Windows | `x86_64`          | `brainpod-amd64-windows.zip`    |
+## Let your coding agent deploy
 
-The download is checked against the release's own `SHA256SUMS` before anything is written, and
-the binary is staged in the app's data directory first — so on macOS and Linux the one
-authorization prompt covers a single `install(1)` of a file that is already complete and
-verified on disk. Windows needs no prompt at all.
+The row of marks at the foot of the sidebar installs the
+[Brainpod Agent Skill](https://github.com/brainpodnl/skills) into the coding agents you already
+use, so they can deploy, operate and debug your pod for you. A tile lights up for every agent
+that has it.
 
-An out-of-date CLI is offered in the sidebar's **Updates** band as well as here; both read one
-store (`src/lib/cli.ts`), so the two can never disagree about what is installed or what is
-published. The band offers an out-of-date agent skill the same way, updating every agent that
-has fallen behind in one download; its staleness rule is `src/lib/skills.ts`, shared with the
-fan at the foot of the sidebar. Only a skill this window installed can be called out of date —
-a directory it did not write carries no receipt, so there is no version to compare.
+| Agent       | Installs into                |
+| ----------- | ---------------------------- |
+| Claude Code | `~/.claude/skills/brainpod`  |
+| Codex       | `~/.agents/skills/brainpod`  |
+| Cursor      | `~/.cursor/skills/brainpod`  |
+| Gemini CLI  | `~/.gemini/skills/brainpod`  |
 
-A release is public for the ten minutes its build matrix takes, so the newest tag regularly
-carries no binaries yet; the window says so and offers the newest release that does have this
-platform's build. Staleness is judged from the install receipt — the release this window
-actually fetched — because `brainpodnl/cli` stamps its binaries from a `VERSION` file rather
-than from the tag, and a binary's own `--version` is therefore not comparable to a release name.
-Removal is offered only for a binary this window itself wrote and that is still byte-for-byte
-what it wrote; an adopted install is kept current but never deleted.
+Only agents found on this machine are offered, and updates are handled the same way as the app
+itself. Agents read their skills at startup, so restart one that's already running.
 
-### Agent skill
+## Build it yourself
 
-The fan of marks at the foot of the sidebar installs the
-[`brainpod` Agent Skill](https://github.com/brainpodnl/skills) into the coding agents on this
-machine, so they can deploy, operate and debug a pod with the `brainpod` CLI. A tile stands lit
-for an agent that already holds it.
-
-| Agent       | Skills directory                                            |
-| ----------- | ----------------------------------------------------------- |
-| Claude Code | `~/.claude/skills/brainpod`                                  |
-| Codex       | `~/.agents/skills/brainpod` (the shared Agent Skills path)   |
-| Cursor      | `~/.cursor/skills/brainpod`                                  |
-| Gemini CLI  | `~/.gemini/skills/brainpod`                                  |
-
-Only agents this machine actually has are listed — one that has run here, or whose CLI is on
-`PATH`, plus any directory that already holds the skill. Every path is home-relative, so Windows
-resolves the same table under `%USERPROFILE%`. Installing
-downloads `skills/brainpod` from the repository's default branch, writes it through a staging
-directory next to the target, and leaves a `.brainpod-desktop.json` receipt carrying the version.
-That receipt is what lets the window call an install current or out of date — and what makes it
-refuse to delete a skill directory it did not write, such as a symlink into your own clone. An
-agent reads its skills at startup, so restart one that is already running.
-
-## Development
-
-Needs Rust (stable), Node 24 and pnpm. On Linux also the WebKitGTK toolchain listed in
+Needs Rust (stable), Node 24 and pnpm. On Linux, also the WebKitGTK packages listed in
 [`.github/workflows/release.yml`](.github/workflows/release.yml).
 
 ```sh
 pnpm install
-pnpm start       # tauri dev — the app window, with HMR on the webview
+pnpm start       # the app window, with hot reload
 ```
 
-| Command          | What it does                              |
-| ---------------- | ----------------------------------------- |
-| `pnpm start`     | run the desktop app in development         |
-| `pnpm typecheck` | `tsc --noEmit`                             |
-| `pnpm build`     | build the webview bundle                   |
-| `pnpm bundle`    | `tauri build` — installers for this host   |
+| Command          | What it does                            |
+| ---------------- | --------------------------------------- |
+| `pnpm start`     | run the desktop app in development      |
+| `pnpm typecheck` | type-check the webview                  |
+| `pnpm build`     | build the webview bundle                |
+| `pnpm bundle`    | build installers for this machine       |
 
-There is no test runner: `pnpm typecheck` and `pnpm build` plus `cargo fmt`/`clippy`/`test` in
-`src-tauri/` are the gates CI enforces.
-
-The three version files — `package.json`, `src-tauri/tauri.conf.json` and `src-tauri/Cargo.toml` —
-must agree with each other, and CI refuses a build where they do not. They only affect local
-builds: a release takes its version from its tag.
+There's no test runner: `pnpm typecheck` and `pnpm build`, plus `cargo fmt`, `clippy` and `test`
+in `src-tauri/`, are what CI enforces. The version in `package.json`,
+`src-tauri/tauri.conf.json` and `src-tauri/Cargo.toml` must match — CI checks that too.
 
 ## Releasing
 
-See [`.github/RELEASING.md`](.github/RELEASING.md). In short: draft a release on GitHub with a new
-`v*` tag and publish it. Publishing creates the tag and starts the **Release** workflow, which
-stamps that version into the checkout, builds all five targets, and uploads them together with the
-signed `latest.json`.
+Draft a release on GitHub with a new `v*` tag and publish it; the workflow builds and uploads
+every platform. Details in [`.github/RELEASING.md`](.github/RELEASING.md).
