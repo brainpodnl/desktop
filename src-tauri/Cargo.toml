@@ -71,4 +71,4 @@ zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 [build-dependencies]
 protox = "0.7.1"
 tauri-build = { version = "2", features = [] }
-tonic-build = "0.12.3"
+tonic-build = "0.14.6"
