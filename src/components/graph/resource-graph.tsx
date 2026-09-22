@@ -1,5 +1,5 @@
 import { Undo2 } from 'lucide-react';
-import { motion } from 'motion/react';
+import { AnimatePresence, motion } from 'motion/react';
 import {
   useCallback,
   useEffect,
@@ -255,8 +255,29 @@ const STAGGER_STEPS = 6;
 const EDGE_LAG = 0.09;
 const EDGE_FADE = 0.22;
 
-/** The connector's dash. The line is still; what moves along it is a packet. */
-const DASH = '4 5';
+/**
+ * The dotted connector, and how a throat opens out of it.
+ *
+ * Dots rather than dashes: a dash at this weight is a small line and reads as
+ * the connector itself, where a row of dots reads as a connector held back —
+ * which is what a reference nobody is asking about should look like.
+ * `CLOSED_MOUTH` is the width the channel waits at: wide enough that the morph
+ * has the same shape at both ends, narrow enough to be the line it grows from.
+ */
+const SPINE_DOTS = '0.5 5';
+const CLOSED_MOUTH = 6;
+const OPEN = 0.34;
+/** Ease-out: quick off the line, settling into the channel. */
+const EASE = [0.16, 0.84, 0.24, 1] as const;
+
+/**
+ * How the traffic arrives and leaves. Arriving waits for the channel to be
+ * most of the way open, then runs the packets in one behind another; leaving
+ * is quicker, unstaggered, and finishes before the channel has closed.
+ */
+const PACKET_ARRIVE = 0.26;
+const PACKET_STAGGER = 0.018;
+const PACKET_LEAVE = 0.16;
 
 /**
  * How long one packet takes from mouth to mouth. Fast enough to read as
@@ -1259,26 +1280,65 @@ export function ResourceGraph({
                         fill="none"
                         stroke={route.stroke}
                         strokeWidth={route.active ? 1.75 : 1.5}
-                        strokeDasharray={DASH}
+                        strokeDasharray={SPINE_DOTS}
                         strokeLinecap="round"
                         vectorEffect="non-scaling-stroke"
                       />
                     ) : (
-                      /*
-                        The channel has no walls. A stroked outline made it a
-                        drawn object with an edge you could point at, and a
-                        reference has no edge — what a resource reaches another
-                        over is a field, not a pipe. So it is paint alone, one
-                        flat colour taken through the blur above, which is what
-                        fades it out at the sides and at the waist in the same
-                        breath.
-                      */
-                      <path
-                        d={conduitShape(run.from, run.to, route.mouth)}
-                        fill={channel}
-                        fillOpacity={route.active ? 0.62 : 0.95}
-                        filter={`url(#${HAZE})`}
-                      />
+                      <>
+                        {/*
+                          At rest a connector is a thread: a dotted spine down
+                          the middle of the throat, which is all a reference
+                          needs to say while nobody is asking about it.
+                        */}
+                        <motion.path
+                          d={`M ${run.from.x} ${run.from.y} L ${run.to.x} ${run.to.y}`}
+                          fill="none"
+                          stroke={route.stroke}
+                          strokeWidth={1.5}
+                          strokeDasharray={SPINE_DOTS}
+                          strokeLinecap="round"
+                          vectorEffect="non-scaling-stroke"
+                          initial={false}
+                          animate={{ opacity: route.active ? 0 : 1 }}
+                          transition={{ duration: reduced ? 0 : OPEN, ease: EASE }}
+                        />
+
+                        {/*
+                          Selecting opens that thread into the channel it was
+                          standing in for. The morph is on `d` itself, between
+                          the same shape at a sliver's width and at its own:
+                          the commands match, so the throat grows out of the
+                          line rather than crossfading over it, and the two
+                          read as one object in two states rather than as two
+                          drawings of the same edge.
+
+                          The channel has no walls. A stroked outline made it a
+                          drawn object with an edge you could point at, and a
+                          reference has no edge — what a resource reaches
+                          another over is a field, not a pipe. So it is paint
+                          alone, one flat colour taken through the blur above,
+                          which is what fades it out at the sides and at the
+                          waist in the same breath.
+                        */}
+                        <motion.path
+                          fill={channel}
+                          filter={`url(#${HAZE})`}
+                          initial={{
+                            d: conduitShape(run.from, run.to, CLOSED_MOUTH),
+                            fillOpacity: 0,
+                          }}
+                          animate={{
+                            d: conduitShape(
+                              run.from,
+                              run.to,
+                              route.active ? route.mouth : CLOSED_MOUTH,
+                            ),
+                            fillOpacity: route.active ? 0.62 : 0,
+                          }}
+                          transition={{ duration: reduced ? 0 : OPEN, ease: EASE }}
+                        />
+                      </>
                     )}
 
                     {/* The reference, in flight: what the connector carries,
@@ -1294,29 +1354,48 @@ export function ResourceGraph({
                         has made the fact conditional on the effect; the
                         scattered marks in the channel still say this edge is
                         the selected one and which way it runs. */}
-                    {packets.map((packet) => (
-                      /* A square, not a dash. The mark is a thing being
-                         carried, and a dash reads as a piece of the line that
-                         used to be drawn here — which is exactly what the
-                         channel replaced. */
-                      <rect
-                        key={packet.seed}
-                        x={(reduced ? packet.still.x : 0) - packet.size / 2}
-                        y={(reduced ? packet.still.y : 0) - packet.size / 2}
-                        width={packet.size}
-                        height={packet.size}
-                        rx={0.75}
-                        fill={route.stroke}>
-                        {!reduced && (
-                          <animateMotion
-                            dur={`${packet.travel}s`}
-                            begin={`-${packet.begin}s`}
-                            repeatCount="indefinite"
-                            path={packet.path}
-                          />
-                        )}
-                      </rect>
-                    ))}
+                    <AnimatePresence>
+                      {packets.map((packet, index) => (
+                        /* A square, not a dash. The mark is a thing being
+                           carried, and a dash reads as a piece of the line
+                           that used to be drawn here — which is exactly what
+                           the channel replaced.
+
+                           They arrive one after another rather than all at
+                           once: the channel opens, and then it has traffic in
+                           it. Sixteen squares appearing on the same frame is a
+                           layer being switched on, which is the one thing this
+                           whole treatment is trying not to look like. Leaving
+                           is quicker and unstaggered — a connection that has
+                           stopped being the subject should not take a beat to
+                           admit it. */
+                        <motion.rect
+                          key={packet.seed}
+                          x={(reduced ? packet.still.x : 0) - packet.size / 2}
+                          y={(reduced ? packet.still.y : 0) - packet.size / 2}
+                          width={packet.size}
+                          height={packet.size}
+                          rx={0.75}
+                          fill={route.stroke}
+                          initial={{ opacity: 0, scale: 0.4 }}
+                          animate={{ opacity: 1, scale: 1 }}
+                          exit={{ opacity: 0, transition: { duration: reduced ? 0 : PACKET_LEAVE } }}
+                          transition={{
+                            duration: reduced ? 0 : PACKET_ARRIVE,
+                            delay: reduced ? 0 : OPEN * 0.4 + index * PACKET_STAGGER,
+                            ease: EASE,
+                          }}>
+                          {!reduced && (
+                            <animateMotion
+                              dur={`${packet.travel}s`}
+                              begin={`-${packet.begin}s`}
+                              repeatCount="indefinite"
+                              path={packet.path}
+                            />
+                          )}
+                        </motion.rect>
+                      ))}
+                    </AnimatePresence>
                   </motion.g>
                 );
               })}
@@ -1453,7 +1532,7 @@ function EdgeLabel({
          composited layer paints over a plain positioned sibling whatever its
          `z-index` says. Promoting the label too puts both in the same
          comparison, where `z-2` decides it. */
-      className="pointer-events-none absolute z-[2] flex h-[22px] -translate-x-1/2 -translate-y-1/2 transform-gpu items-center gap-2 rounded-full border px-2.5 font-mono text-ui-mono whitespace-nowrap"
+      className="pointer-events-none absolute z-[2] flex h-[22px] -translate-x-1/2 -translate-y-1/2 transform-gpu items-center gap-2 rounded-full border px-2.5 font-mono text-ui-mono whitespace-nowrap transition-colors duration-300"
       style={{
         left: x,
         top: y,
