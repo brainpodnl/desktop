@@ -49,6 +49,28 @@ paid larger runner or it has to be dropped.
 Linux bundles are built on Ubuntu 24.04, so `.deb`/`.rpm`/`.AppImage` require
 glibc 2.39 or newer. That is Ubuntu 24.04, Debian 13, Fedora 40 and up.
 
+## Organization settings
+
+The `brainpodnl` organization allows only selected actions, so every
+third-party action either matches a pattern in that allowlist or the run dies
+at startup — before a single step, with `startup_failure` and no logs. These
+four are what the two workflows reach for:
+
+```
+dtolnay/rust-toolchain@stable
+pnpm/action-setup@v6
+Swatinem/rust-cache@v2
+tauri-apps/tauri-action@v1
+```
+
+`actions/*` is covered separately by "allow actions created by GitHub". The
+patterns are pinned to a major version, so a Dependabot bump of any of the four
+fails at startup until an organization owner widens the entry — Organization
+settings → Actions → General → Allow specified actions and reusable workflows.
+
+`GITHUB_TOKEN` may stay on the organization default of read-only permissions:
+the jobs that upload assets ask for `contents: write` themselves.
+
 ## Secrets
 
 ### `TAURI_SIGNING_PRIVATE_KEY` (required)
