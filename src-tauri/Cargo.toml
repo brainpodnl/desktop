@@ -16,6 +16,7 @@ path = "src/main.rs"
 [dependencies]
 anyhow = "1.0.102"
 axum = "0.8.8"
+dirs = "6.0.0"
 # The agent skill ships as a repository tarball from GitHub, unpacked in memory.
 flate2 = "1.1"
 getrandom = "0.4.3"

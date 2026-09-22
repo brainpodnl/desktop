@@ -19,38 +19,30 @@ const MENU_ITEM_ID: &str = "settings";
 const WIDTH: f64 = 660.0;
 const INITIAL_HEIGHT: f64 = 480.0;
 
-/// The standard macOS Settings item, inserted into the menu Tauri already
-/// builds rather than replacing that menu: rebuilding it by hand is how an app
-/// loses Services, Hide Others, and — the one nobody notices until it is gone —
-/// the Edit submenu that gives the webview its Cut/Copy/Paste key equivalents.
+/// Installs the standard macOS Settings item into the app menu Tauri already
+/// builds. Rebuilding that menu by hand is how an app loses Services, Hide
+/// Others, and the Edit submenu that gives the webview its Cut/Copy/Paste key
+/// equivalents.
 ///
-/// Position: on macOS the first submenu is the app menu, whose default items
-/// are About, separator, Services, …, so the item and its own separator go in
-/// at index 2 and land directly under About, where every Mac app puts it. Other
-/// platforms have no app menu; the first submenu is File, and the item goes at
-/// the top of it with `Ctrl+,` — the GNOME and Windows equivalent.
+/// Windows and Linux deliberately keep no native menu bar. Their `Ctrl+,`
+/// shortcut is handled by the document; creating `Menu::default` there adds a
+/// separate bar above the webview, which also inherits native theme colours
+/// independently from the document.
 pub fn install_menu(app: &AppHandle) -> Result<()> {
-    let menu = Menu::default(app)?;
+    if !cfg!(target_os = "macos") {
+        return Ok(());
+    }
 
-    let accelerator = if cfg!(target_os = "macos") {
-        "Cmd+,"
-    } else {
-        "Ctrl+,"
-    };
-    let item = MenuItem::with_id(app, MENU_ITEM_ID, "Settings…", true, Some(accelerator))?;
+    let menu = Menu::default(app)?;
+    let item = MenuItem::with_id(app, MENU_ITEM_ID, "Settings…", true, Some("Cmd+,"))?;
     let separator = PredefinedMenuItem::separator(app)?;
 
     let items = menu.items()?;
     let first = items.first().and_then(|item| item.as_submenu());
 
     if let Some(submenu) = first {
-        if cfg!(target_os = "macos") {
-            submenu.insert(&separator, 2)?;
-            submenu.insert(&item, 2)?;
-        } else {
-            submenu.insert(&separator, 1)?;
-            submenu.insert(&item, 0)?;
-        }
+        submenu.insert(&separator, 2)?;
+        submenu.insert(&item, 2)?;
     }
 
     app.set_menu(menu)?;

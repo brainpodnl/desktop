@@ -13,10 +13,9 @@ pub const DEFAULT_DASHBOARD_ENDPOINT: &str = "https://console.brainpod.io";
 #[allow(dead_code)]
 pub const DEFAULT_REGISTRY_ENDPOINT: &str = "https://registry.brainpod.io";
 
-/// The on-disk format of `~/.config/brainpod/config.toml`, shared verbatim with
-/// the `brainpod` CLI: signing in here signs the CLI in too. The CLI parses it
-/// with `deny_unknown_fields`, so a field added here would make the CLI reject
-/// the user's config outright.
+/// The Brainpod CLI and desktop app share this on-disk format and location:
+/// `~/.config/brainpod/config.toml` on Unix and the roaming configuration
+/// directory on Windows.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
@@ -38,10 +37,17 @@ impl Config {
             return Ok(PathBuf::from(path).join("brainpod/config.toml"));
         }
 
-        let home = std::env::var_os("HOME")
+        #[cfg(windows)]
+        let directory =
+            dirs::config_dir().ok_or_else(|| anyhow!("cannot locate config directory"))?;
+
+        #[cfg(not(windows))]
+        let directory = std::env::var_os("HOME")
             .map(PathBuf::from)
-            .ok_or_else(|| anyhow!("cannot locate config directory: HOME is not set"))?;
-        Ok(home.join(".config/brainpod/config.toml"))
+            .ok_or_else(|| anyhow!("cannot locate config directory: HOME is not set"))?
+            .join(".config");
+
+        Ok(directory.join("brainpod/config.toml"))
     }
 
     pub fn load(path: &Path) -> Result<Self> {
@@ -88,6 +94,14 @@ impl Config {
         file.write_all(contents.as_bytes())
             .with_context(|| format!("failed to write config {}", temporary.display()))?;
         drop(file);
+
+        // Windows does not replace an existing destination with `rename`.
+        // Removing it first keeps token and pod updates working after sign-in.
+        #[cfg(windows)]
+        if path.exists() {
+            fs::remove_file(path)
+                .with_context(|| format!("failed to replace config {}", path.display()))?;
+        }
 
         fs::rename(&temporary, path)
             .with_context(|| format!("failed to replace config {}", path.display()))?;
