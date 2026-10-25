@@ -26,6 +26,7 @@ import {
   routeDirect,
   ROW_GAP,
   type EdgeLink,
+  type GraphEdge,
   type GraphNode,
   type Point,
 } from '@/components/graph/layout';
@@ -86,13 +87,15 @@ function conduitRun(
   const end = points[points.length - 1];
   if (start === undefined || end === undefined) return null;
 
-  // It has to leave the source's own bottom edge and arrive on the target's
-  // top edge: a connector that enters from the side is a detour around
-  // something, and a throat drawn across that something would cover it.
-  if (Math.abs(start.y - (from.y + from.height)) > ON_EDGE) return null;
-  if (Math.abs(end.y - to.y) > ON_EDGE) return null;
+  // It has to leave one horizontal edge of the source and arrive on the facing
+  // edge of the target — bottom to top, or top to bottom for a reference that
+  // runs back up beside its partner. A connector that enters from the side is
+  // a detour around something, and a throat drawn across it would cover it.
+  const up = end.y < start.y;
+  if (Math.abs(start.y - (up ? from.y : from.y + from.height)) > ON_EDGE) return null;
+  if (Math.abs(end.y - (up ? to.y + to.height : to.y)) > ON_EDGE) return null;
 
-  const run = end.y - start.y;
+  const run = Math.abs(end.y - start.y);
   if (run < CONDUIT_MIN_RUN || run > ROW_GAP + ON_EDGE) return null;
 
   return { from: start, to: end };
@@ -502,21 +505,28 @@ export function ResourceGraph({
      * between them — the same reason the layout fans the anchors they start
      * from in the first place.
      *
-     * Leaving and arriving are counted apart, because they are opposite edges
-     * of the card: a resource with one reference out and one in has two full
-     * mouths, one on its bottom and one on its top, and nothing to share.
+     * Counted per physical edge, not per direction: a resource with one
+     * reference out and one in has two full mouths, one on its bottom and one
+     * on its top, and nothing to share — but a reference and the one running
+     * back beside it both open on the same bottom and the same top.
      */
-    const leaving: Record<string, number> = {};
-    const arriving: Record<string, number> = {};
-    for (const entry of drawn) {
-      if (entry.run === null) continue;
-      leaving[entry.edge.from] = (leaving[entry.edge.from] ?? 0) + 1;
-      arriving[entry.edge.to] = (arriving[entry.edge.to] ?? 0) + 1;
+    const sides = (edge: GraphEdge, run: { from: Point; to: Point }): [string, string] => {
+      const up = run.to.y < run.from.y;
+      return [
+        `${edge.from}\u0000${up ? 'top' : 'bottom'}`,
+        `${edge.to}\u0000${up ? 'bottom' : 'top'}`,
+      ];
+    };
+    const mouths: Record<string, number> = {};
+    for (const { edge, run } of drawn) {
+      if (run === null) continue;
+      for (const side of sides(edge, run)) mouths[side] = (mouths[side] ?? 0) + 1;
     }
 
     return drawn.map(({ edge, source, points, run }) => {
       const active = selected === edge.from || selected === edge.to;
-      const shared = Math.max(leaving[edge.from] ?? 1, arriving[edge.to] ?? 1);
+      const shared =
+        run === null ? 1 : Math.max(...sides(edge, run).map((side) => mouths[side] ?? 1));
 
       return {
         key: `${edge.from}\u0000${edge.to}`,
@@ -570,21 +580,38 @@ export function ResourceGraph({
      */
     const byConstraint = [...routes].sort((a, b) => a.points.length - b.points.length);
 
+    const conduits = new Map(
+      routes.flatMap((route) => (route.run === null ? [] : [[route.key, route.run] as const])),
+    );
+
     for (const route of byConstraint) {
       if (route.link === null) continue;
 
       /* A conduit's bar belongs on the waist, which is the narrowest part of
          the run and the one place a label crosses it without burying it. The
-         polyline's own midpoints are the fallback for a detour. */
-      const candidates =
-        route.run === null
-          ? barAnchors(route.points)
-          : [
-              {
-                x: (route.run.from.x + route.run.to.x) / 2,
-                y: (route.run.from.y + route.run.to.y) / 2,
-              },
-            ];
+         polyline's own midpoints are the fallback for a detour.
+
+         A link and its reverse are one two-lane channel, and two bars cannot
+         share its waist. Both sit on the channel's midline instead, each at
+         the end of the resource that declares it, as close as it fits — so
+         the pair read as two labels stacked in the gap, the upper one stating
+         what flows down and the lower one what flows back up. The waist stays
+         the fallback. */
+      const { run } = route;
+      const candidates: Point[] = [];
+      if (run === null) {
+        candidates.push(...barAnchors(route.points));
+      } else {
+        const partner = conduits.get(`${route.to}\u0000${route.from}`);
+        if (partner !== undefined) {
+          const inset = BAR_HEIGHT / 2 + BAR_CLEARANCE;
+          candidates.push({
+            x: (run.from.x + partner.to.x) / 2,
+            y: run.from.y + Math.sign(run.to.y - run.from.y) * inset,
+          });
+        }
+        candidates.push({ x: (run.from.x + run.to.x) / 2, y: (run.from.y + run.to.y) / 2 });
+      }
 
       const width = barWidth(route.link);
 
@@ -1245,7 +1272,8 @@ export function ResourceGraph({
                           return { ...common, path: route.d, still: along(route.points, at) };
                         }
 
-                        /* Straight down, and only down. A lean off the
+                        /* Plumb, mouth to mouth — down, or up for a reference
+                           running back to the card above. A lean off the
                            vertical read as the packets sliding sideways
                            through the channel rather than falling through it;
                            the scatter that keeps them off a grid is in where

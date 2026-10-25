@@ -379,18 +379,23 @@ type Slot = {
   down: Slot[];
 };
 
-/** One connector, plus the route the layout worked out for it. */
+/**
+ * One connector, plus the route the layout worked out for it. `from` and `to`
+ * are the link as declared; `source` and `target` are the slots it is laid out
+ * between, always top to bottom.
+ */
 type Wire = {
   from: string;
   to: string;
   source: Slot;
   target: Slot;
   /**
-   * False when layering could not put the target below the source — the members
-   * of a cycle saturate on one layer — so there is no chain to follow and the
-   * connector has to pass around the cards rather than between them.
+   * True for a link the layering left out because it would close a cycle. Its
+   * target sits above its source, so it is laid out downward like any other
+   * wire — fanned beside its partner, through the same gaps — and its route is
+   * turned round at the end to run the way it was declared.
    */
-  descends: boolean;
+  reversed: boolean;
   /** A virtual slot for each layer strictly between source and target. */
   chain: Slot[];
   /** The x the route holds in each layer it touches, source anchor to target. */
@@ -559,10 +564,10 @@ export function orthogonalPath(points: Point[], radius = 8): string {
 /**
  * Bottom of one box to the top of another, leaving through `startX` and arriving
  * at `endX`. Given room between them the connector turns once halfway down;
- * without it — dragging a card can leave a target level with or above its
- * source — it drops clear of the source, passes both boxes on whichever side is
- * nearer and comes back into the target's top. Every segment is vertical or
- * horizontal either way, and consecutive segments always change axis.
+ * without it — dragging a card can leave a target level with its source — it
+ * drops clear of the source, passes both boxes on whichever side is nearer and
+ * comes back into the target's top. Every segment is vertical or horizontal
+ * either way, and consecutive segments always change axis.
  */
 const routeOrthogonal = (from: Box, to: Box, startX: number, endX: number): Point[] => {
   const startY = from.y + from.height;
@@ -597,9 +602,15 @@ const routeOrthogonal = (from: Box, to: Box, startX: number, endX: number): Poin
  * The fallback the renderer draws with once a card has been dragged: the lanes
  * the layout reserved describe where the cards used to be, so an edge with a
  * moved endpoint is routed again from the two boxes alone, centre to centre.
+ *
+ * A target clear above its source is reached out of the source's top: the same
+ * connector run backward, rather than a lap around both cards.
  */
 export function routeDirect(from: GraphNode, to: GraphNode): Point[] {
-  return routeOrthogonal(from, to, from.x + from.width / 2, to.x + to.width / 2);
+  const fromX = from.x + from.width / 2;
+  const toX = to.x + to.width / 2;
+  if (from.y - (to.y + to.height) >= DETOUR) return routeOrthogonal(to, from, toX, fromX).reverse();
+  return routeOrthogonal(from, to, fromX, toX);
 }
 
 /**
@@ -611,6 +622,41 @@ const anchorAt = (slot: Slot, position: number, count: number): number => {
   if (count <= 1) return slot.centre;
   const span = slot.width / 2;
   return Math.round(slot.centre - span / 2 + (span * position) / (count - 1));
+};
+
+/**
+ * Centre to centre, the two lanes of a link and its reverse. Wide enough that
+ * the two throats stay apart at their shared mouth width, close enough that
+ * they read as one channel carrying traffic both ways rather than as two
+ * connectors that happen to join the same cards.
+ */
+const PAIR_LANE = 40;
+
+/**
+ * Anchors for one card edge, `group` already in fan order. A link and its
+ * reverse between neighbouring cards hold a single place in the fan and split
+ * it into two lanes; everything else takes a place of its own.
+ */
+const fan = (slot: Slot, group: Wire[], place: (wire: Wire, x: number) => void): void => {
+  const bundles: Wire[][] = [];
+  for (const wire of group) {
+    const last = bundles[bundles.length - 1];
+    const partner = last?.[0];
+    const paired =
+      partner !== undefined &&
+      partner.chain.length === 0 &&
+      wire.chain.length === 0 &&
+      partner.source === wire.source &&
+      partner.target === wire.target;
+    if (paired) last?.push(wire);
+    else bundles.push([wire]);
+  }
+  bundles.forEach((bundle, position) => {
+    const centre = anchorAt(slot, position, bundles.length);
+    bundle.forEach((wire, lane) => {
+      place(wire, Math.round(centre + (lane - (bundle.length - 1) / 2) * PAIR_LANE));
+    });
+  });
 };
 
 /**
@@ -672,22 +718,59 @@ export function layoutGraph(resources: Resource[]): GraphLayout {
   }
   links.sort((a, b) => byText(a.from, b.from) || byText(a.to, b.to));
 
+  /*
+   * Which links decide the layers. `dependsOn` is not guaranteed acyclic — an
+   * `${name.field}` env template can run against the grain, as an app reading
+   * the hostname of the route that fronts it does — and a cycle has no longest
+   * path. Relaxing it anyway saturated the cycle and everything below it on a
+   * single layer, so a pod with one such reference drew as one row.
+   *
+   * A link therefore joins the layering only if it closes no cycle with the
+   * links already taken. Env references are offered last: a route's rule, a
+   * mount or a disk is why the pair exists, while a template is a value read
+   * back, and of the two directions it is the one to give up. A link left out
+   * is still drawn, laid out upside down: its target is always above it.
+   */
+  const forward = new Map<string, string[]>();
+  for (const name of index.keys()) forward.set(name, []);
+  const reaches = (from: string, to: string): boolean => {
+    const seen = new Set<string>([from]);
+    const stack = [from];
+    for (let name = stack.pop(); name !== undefined; name = stack.pop()) {
+      if (name === to) return true;
+      for (const next of forward.get(name) ?? []) {
+        if (seen.has(next)) continue;
+        seen.add(next);
+        stack.push(next);
+      }
+    }
+    return false;
+  };
+  const isReference = (link: { from: string; to: string }): boolean => {
+    const from = index.get(link.from);
+    const to = index.get(link.to);
+    return from !== undefined && to !== undefined && edgeLink(from, to)?.via === 'env';
+  };
+  const layering: { from: string; to: string }[] = [];
+  for (const reference of [false, true]) {
+    for (const link of links) {
+      if (isReference(link) !== reference || reaches(link.to, link.from)) continue;
+      forward.get(link.from)?.push(link.to);
+      layering.push(link);
+    }
+  }
+
+  /*
+   * A node sits one layer below the deepest node pointing at it: a longest-path
+   * relaxation over an acyclic set, so it settles within one pass per node and
+   * every layer down to the deepest is occupied.
+   */
   const depth = new Map<string, number>();
   for (const name of index.keys()) depth.set(name, 0);
-  /*
-   * A node sits one layer below the deepest node pointing at it, which is a
-   * longest-path relaxation. `dependsOn` is not guaranteed acyclic — an
-   * `${name.field}` env template can run in both directions — so this is
-   * bounded twice rather than recursed: at most one pass per node, and no
-   * depth past the last layer a DAG of this size could have. A cycle has no
-   * longest path, so its members saturate at the bottom instead of pushing
-   * each other down forever.
-   */
-  const floor = index.size - 1;
   for (let pass = 0; pass < index.size; pass += 1) {
     let moved = false;
-    for (const link of links) {
-      const below = Math.min((depth.get(link.from) ?? 0) + 1, floor);
+    for (const link of layering) {
+      const below = (depth.get(link.from) ?? 0) + 1;
       if (below > (depth.get(link.to) ?? 0)) {
         depth.set(link.to, below);
         moved = true;
@@ -696,16 +779,13 @@ export function layoutGraph(resources: Resource[]): GraphLayout {
     if (!moved) break;
   }
 
-  // Keyed by depth rather than indexed by it: a saturated cycle leaves the
-  // layers between it and the roots empty, and an empty layer is not a row.
-  const rows = new Map<number, Resource[]>();
+  const layers: Resource[][] = [];
   for (const [name, resource] of index) {
     const level = depth.get(name) ?? 0;
-    const row = rows.get(level) ?? [];
+    const row = layers[level] ?? [];
     row.push(resource);
-    rows.set(level, row);
+    layers[level] = row;
   }
-  const layers = [...rows.entries()].sort((a, b) => a[0] - b[0]).map(([, row]) => row);
   for (const layer of layers) layer.sort(byName);
 
   const columns: Slot[][] = layers.map(() => []);
@@ -747,45 +827,48 @@ export function layoutGraph(resources: Resource[]): GraphLayout {
    */
   const wires: Wire[] = [];
   for (const link of links) {
-    const source = slots.get(link.from);
-    const target = slots.get(link.to);
-    if (source === undefined || target === undefined) continue;
+    const declarer = slots.get(link.from);
+    const dependency = slots.get(link.to);
+    if (declarer === undefined || dependency === undefined) continue;
+
+    // Every link spans layers: a layered one runs down by construction, and
+    // one left out closes a cycle, so its target already reaches its source.
+    const reversed = dependency.layer < declarer.layer;
+    const source = reversed ? dependency : declarer;
+    const target = reversed ? declarer : dependency;
 
     const chain: Slot[] = [];
-    const descends = target.layer > source.layer;
-    if (descends) {
-      let previous = source;
-      for (let level = source.layer + 1; level < target.layer; level += 1) {
-        const column = columnAt(level);
-        const bend: Slot = {
-          key: `${link.from}\u0000${link.to}\u0000${level}`,
-          resource: null,
-          layer: level,
-          order: column.length,
-          rank: 0,
-          width: VIRTUAL_WIDTH,
-          height: 0,
-          centre: 0,
-          y: 0,
-          up: [],
-          down: [],
-        };
-        column.push(bend);
-        chain.push(bend);
-        previous.down.push(bend);
-        bend.up.push(previous);
-        previous = bend;
-      }
-      previous.down.push(target);
-      target.up.push(previous);
+    let previous = source;
+    for (let level = source.layer + 1; level < target.layer; level += 1) {
+      const column = columnAt(level);
+      const bend: Slot = {
+        key: `${link.from}\u0000${link.to}\u0000${level}`,
+        resource: null,
+        layer: level,
+        order: column.length,
+        rank: 0,
+        width: VIRTUAL_WIDTH,
+        height: 0,
+        centre: 0,
+        y: 0,
+        up: [],
+        down: [],
+      };
+      column.push(bend);
+      chain.push(bend);
+      previous.down.push(bend);
+      bend.up.push(previous);
+      previous = bend;
     }
+    previous.down.push(target);
+    target.up.push(previous);
 
     wires.push({
       from: link.from,
       to: link.to,
       source,
       target,
-      descends,
+      reversed,
       chain,
       stops: [],
       lanes: [],
@@ -920,32 +1003,34 @@ export function layoutGraph(resources: Resource[]): GraphLayout {
   /*
    * Anchors are ordered by where each connector is heading — the centre of the
    * next box on its route — so a fan spreads in the direction its lines are
-   * actually going and none of them cross before leaving the card.
+   * actually going and none of them cross before leaving the card. Ties fall to
+   * one order shared by both ends: a link and its reverse join the same two
+   * cards, and their lanes only run parallel if both cards rank them alike.
    */
+  const byLink = (a: Wire, b: Wire): number => byText(a.from, b.from) || byText(a.to, b.to);
   for (const [slot, group] of outgoing) {
     group.sort((a, b) => {
       const left = a.chain[0]?.centre ?? a.target.centre;
       const right = b.chain[0]?.centre ?? b.target.centre;
-      return left - right || byText(a.to, b.to);
+      return left - right || byLink(a, b);
     });
-    group.forEach((wire, position) => {
-      wire.startX = anchorAt(slot, position, group.length);
+    fan(slot, group, (wire, x) => {
+      wire.startX = x;
     });
   }
   for (const [slot, group] of incoming) {
     group.sort((a, b) => {
       const left = a.chain[a.chain.length - 1]?.centre ?? a.source.centre;
       const right = b.chain[b.chain.length - 1]?.centre ?? b.source.centre;
-      return left - right || byText(a.from, b.from);
+      return left - right || byLink(a, b);
     });
-    group.forEach((wire, position) => {
-      wire.endX = anchorAt(slot, position, group.length);
+    fan(slot, group, (wire, x) => {
+      wire.endX = x;
     });
   }
 
   const crossings = new Map<number, Crossing[]>();
   for (const wire of wires) {
-    if (!wire.descends) continue;
     wire.stops = [wire.startX, ...wire.chain.map((bend) => bend.centre), wire.endX];
     for (let segment = 0; segment + 1 < wire.stops.length; segment += 1) {
       const start = wire.stops[segment];
@@ -1013,24 +1098,11 @@ export function layoutGraph(resources: Resource[]): GraphLayout {
     const link =
       declarer === undefined || dependency === undefined ? null : edgeLink(declarer, dependency);
 
-    if (wire.descends) return { from: wire.from, to: wire.to, points: routeChain(wire), link };
-    const { source, target } = wire;
-    const sourceBox = {
-      x: source.centre - source.width / 2,
-      y: source.y,
-      width: source.width,
-      height: source.height,
-    };
-    const targetBox = {
-      x: target.centre - target.width / 2,
-      y: target.y,
-      width: target.width,
-      height: target.height,
-    };
+    const points = routeChain(wire);
     return {
       from: wire.from,
       to: wire.to,
-      points: routeOrthogonal(sourceBox, targetBox, wire.startX, wire.endX),
+      points: wire.reversed ? points.reverse() : points,
       link,
     };
   });
