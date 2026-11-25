@@ -31,19 +31,43 @@ fn install_crypto_provider() {
     }
 }
 
+/// The pod window is built here rather than by Tauri from `tauri.conf.json`,
+/// because its transparency is a per-platform decision the config cannot
+/// express: a platform config file would have to restate the whole window.
+///
+/// Only macOS gets a transparent window, because only macOS gets a material
+/// behind it. Elsewhere a transparent window is a hole: tao clears it with an
+/// empty `DwmEnableBlurBehindWindow` region on Windows, which blurs nothing,
+/// and Linux has no material at all, so the sidebar's wash ends up laid over
+/// the raw desktop. Those platforms get an opaque window and an opaque sidebar.
+fn create_main_window(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    let config = app
+        .config()
+        .app
+        .windows
+        .iter()
+        .find(|window| window.label == settings::MAIN_LABEL)
+        .ok_or("tauri.conf.json has no window labelled \"main\"")?;
+
+    let builder = tauri::WebviewWindowBuilder::from_config(app.handle(), config)?;
+
+    #[cfg(target_os = "macos")]
+    apply_window_vibrancy(&builder.transparent(true).build()?);
+
+    #[cfg(not(target_os = "macos"))]
+    builder.build()?;
+
+    Ok(())
+}
+
 /// macOS blurs the desktop through the window itself, so the frontend leaves the
 /// sidebar bare to expose it and paints the content pane opaque on top. That is
 /// the Finder composition, and `UnderWindowBackground` is the material for it.
 /// The effect is cosmetic, so losing it must never cost us a launch.
 #[cfg(target_os = "macos")]
-fn apply_window_vibrancy(app: &tauri::App) {
-    let Some(window) = app.get_webview_window("main") else {
-        eprintln!("skipping window vibrancy: no webview window labelled \"main\"");
-        return;
-    };
-
+fn apply_window_vibrancy(window: &tauri::WebviewWindow) {
     if let Err(error) = window_vibrancy::apply_vibrancy(
-        &window,
+        window,
         window_vibrancy::NSVisualEffectMaterial::UnderWindowBackground,
         None,
         None,
@@ -67,8 +91,7 @@ pub fn run() {
 
     builder
         .setup(|app| {
-            #[cfg(target_os = "macos")]
-            apply_window_vibrancy(app);
+            create_main_window(app)?;
             settings::install_menu(app.handle())?;
             Ok(())
         })

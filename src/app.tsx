@@ -27,10 +27,11 @@ export function App(): ReactElement {
  * One window, two states. There is no route stack to keep, so the session alone
  * decides what is on screen.
  *
- * The shell paints nothing. The window is transparent over a macOS vibrancy
+ * The shell paints nothing. On macOS the window is transparent over a vibrancy
  * material and each screen decides its own surface: the signed-in screen is a
  * vibrant sidebar beside an opaque pane, the sign-in screen is opaque
  * throughout. A background here would cover the material for both of them.
+ * Windows and Linux have no material, so the body paints there instead.
  */
 function Shell(): ReactElement {
   const { status, isRestoring } = useAuth();

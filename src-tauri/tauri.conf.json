@@ -12,6 +12,8 @@
   "app": {
     "windows": [
       {
+        "label": "main",
+        "create": false,
         "title": "Brainpod",
         "width": 1040,
         "height": 720,
@@ -19,7 +21,6 @@
         "minHeight": 560,
         "titleBarStyle": "Overlay",
         "hiddenTitle": true,
-        "transparent": true,
         "trafficLightPosition": { "x": 16, "y": 21 }
       }
     ],
