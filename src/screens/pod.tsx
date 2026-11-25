@@ -270,10 +270,12 @@ function PodRail({
   const reduced = useReducedMotion() === true;
 
   /*
-   * No background, no right border: the window's vibrancy is the sidebar's
-   * surface, the way it is in Finder and Mail, and the divider belongs to the
-   * opaque pane beside it. Secondary text carries a weight step more than it
-   * would on that pane, because flat grey goes muddy over live blur.
+   * No background, no right border: on macOS the window's vibrancy is the
+   * sidebar's surface, the way it is in Finder and Mail, and the divider
+   * belongs to the opaque pane beside it. Windows and Linux have no material,
+   * so `.vibrant` paints the plain background there. Secondary text carries a
+   * weight step more than it would on that pane, because flat grey goes muddy
+   * over live blur.
    */
   return (
     <aside

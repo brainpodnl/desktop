@@ -38,7 +38,8 @@ in one place, at a glance, where the console needs navigation and the CLI needs 
 
 ## Operating Context
 
-- One window, one pod at a time, chosen in a vibrancy sidebar; the content pane is opaque.
+- One window, one pod at a time, chosen in a vibrancy sidebar (macOS; opaque on Windows and
+  Linux, which have no material behind the window); the content pane is opaque.
 - The graph is always read **at one revision**. The window opens on the deployed revision and
   falls back to the newest one for a pod that was never deployed.
 - Brainpod's central mental model is **mutable draft vs deployed revision**: every resource

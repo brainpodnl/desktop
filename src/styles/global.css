@@ -391,16 +391,22 @@
   body {
     @apply text-foreground font-sans antialiased;
     /*
-     * The window itself is transparent over a macOS vibrancy material, so the
-     * document must not paint over it. Opacity is a surface's own decision from
-     * here on: the content pane is `bg-background`, the sidebar is `.vibrant`.
+     * Opaque unless there is a material to show. On macOS the window is
+     * transparent over a vibrancy material, so the document must not paint over
+     * it: opacity is each surface's own decision there, the content pane being
+     * `bg-background` and the sidebar `.vibrant`. Windows and Linux get an
+     * opaque window with nothing behind the webview, so the body paints.
      */
-    background: transparent;
+    background: var(--color-background);
     text-rendering: optimizeLegibility;
     /* Nor does it rubber-band or drag-select. */
     overscroll-behavior: none;
     user-select: none;
     cursor: default;
+  }
+
+  :root[data-platform='macos'] body {
+    background: transparent;
   }
 
   input,
@@ -473,11 +479,11 @@
 }
 
 /*
- * The sidebar. It paints nothing, which is the whole point: the window is
- * transparent over an `NSVisualEffectMaterial`, so what shows through here is
- * the OS blurring the desktop behind it — the same treatment as the Finder,
- * Mail and Notes sidebars. Any `background` on this element replaces the
- * material with flat paint and the effect is simply gone.
+ * The sidebar. On macOS it paints almost nothing, which is the whole point: the
+ * window is transparent over an `NSVisualEffectMaterial`, so what shows through
+ * here is the OS blurring the desktop behind it — the same treatment as the
+ * Finder, Mail and Notes sidebars. Any `background` on this element replaces
+ * the material with flat paint and the effect is simply gone.
  * It is tinted, not fully clear. A real `NSVisualEffectView` biases its
  * material toward the app's own appearance, which is what guarantees that
  * sidebar text keeps its contrast whatever the user's wallpaper happens to be.
@@ -485,17 +491,24 @@
  * dark label text over a dark photograph is unreadable through no fault of the
  * theme. This wash is low enough that the blur still reads as material.
  *
+ * Everywhere else it is opaque. Windows and Linux have no material behind the
+ * window, so the same wash would sit over the raw, unblurred desktop.
+ *
  * Nothing translucent may be stacked inside it. Two blurs over each other is
  * where legibility collapses, so a card that needs its own surface belongs in
  * the opaque content pane, not here.
  */
 .vibrant {
+  background: var(--color-background);
+}
+
+:root[data-platform='macos'] .vibrant {
   background: color-mix(in oklab, var(--color-background) 55%, transparent);
 }
 
 /* Asked for less transparency: the material goes away, so the paint comes back. */
 @media (prefers-reduced-transparency: reduce) {
-  .vibrant {
+  :root[data-platform='macos'] .vibrant {
     background: var(--color-background);
     backdrop-filter: none;
   }
