@@ -16,7 +16,7 @@ path = "src/main.rs"
 [dependencies]
 anyhow = "1.0.102"
 axum = "0.8.8"
-dirs = "6.0.0"
+dirs = "7.0.0"
 # The agent skill ships as a repository tarball from GitHub, unpacked in memory.
 flate2 = "1.1"
 getrandom = "0.4.3"
@@ -36,7 +36,7 @@ rustls = { version = "0.23.40", default-features = false, features = [
 ] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
-sha2 = "0.10"
+sha2 = "0.11"
 tar = "0.4.44"
 # Transparent windows on macOS go through a private AppKit API, which Tauri
 # gates behind this feature plus `app.macOSPrivateApi` in tauri.conf.json.
